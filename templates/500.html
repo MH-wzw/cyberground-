@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>500 服务异常 | CyberGuard</title>
+    <link href="/static/vendor/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/dark-theme.css">
+    <link rel="stylesheet" href="/static/design-system.css?v=41">
+    <script src="/static/js/cg-theme.js?v=3"></script>
+    <style>
+    /* 与 403 / 404 共用同一套错误页视觉，仅错误码配色不同。 */
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+    .err-box {
+      position: relative; z-index: 2; text-align: center;
+      max-width: 560px; padding: 52px 40px;
+      border-radius: 20px;
+      background: rgba(22, 26, 32, .92);
+      border: 1px solid #232B34;
+      box-shadow: 0 24px 60px -12px rgba(251,113,133,.22), 0 4px 20px -2px rgba(251,113,133,.10);
+      backdrop-filter: blur(14px);
+      animation: boxIn .5s cubic-bezier(.4,0,.2,1) forwards;
+    }
+    @keyframes boxIn { from { opacity: 0; transform: translateY(22px) scale(.98); } to { opacity: 1; transform: none; } }
+    .err-code {
+      font-family: var(--font-mono); font-size: 5rem; font-weight: 800; line-height: 1;
+      background: linear-gradient(92deg, var(--accent-orange), var(--accent-red));
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+      animation: codePulse 2.6s ease-in-out infinite;
+    }
+    @keyframes codePulse { 0%,100% { opacity: 1; } 50% { opacity: .68; } }
+    .err-title { font-size: 1.45rem; font-weight: 700; margin: 14px 0 10px; }
+    .err-desc { color: var(--text-secondary); font-size: .9rem; line-height: 1.9; margin-bottom: 26px; }
+    .err-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn-ghost, .btn-solid {
+      padding: 10px 22px; border-radius: 10px; font-size: .88rem;
+      text-decoration: none; transition: transform .2s, box-shadow .24s;
+    }
+    body.theme-dash .btn-solid {
+      color: #052E22; background: linear-gradient(96deg, #34D399, #2DD4BF);
+      box-shadow: 0 8px 22px rgba(52,211,153,.30);
+    }
+    body.theme-dash .btn-solid:hover { transform: translateY(-1px); color: #052E22; }
+    body.theme-dash .btn-ghost {
+      color: var(--text-secondary); background: transparent;
+      border: 1px solid var(--border-control, var(--border-subtle));
+    }
+    body.theme-dash .btn-ghost:hover { color: var(--text-primary); border-color: var(--border-glow); transform: translateY(-1px); }
+    .who {
+      margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border-subtle);
+      font-size: .76rem; color: var(--text-muted); line-height: 1.8;
+    }
+    .who code { color: var(--accent-orange); background: rgba(251,191,36,.1); padding: 1px 6px; border-radius: 4px; }
+    </style>
+  </head>
+  <body class="theme-dash">
+
+    <div class="err-box">
+      <div class="err-code">500</div>
+      <div class="err-title">服务器内部错误</div>
+      <div class="err-desc">
+        处理该请求时发生了未预期的异常。<br>
+        错误详情已记录到服务端日志，请联系管理员排查。
+      </div>
+      <div class="err-actions">
+        {% if current_user %}
+          <a class="btn-solid" href="/">返回态势大屏</a>
+        {% else %}
+          <a class="btn-solid" href="/login">前往登录</a>
+        {% endif %}
+        <a class="btn-ghost" href="javascript:location.reload()">重新加载</a>
+      </div>
+      {# 安全说明：错误详情**只在服务端日志**中记录，绝不回显到页面。
+         回显 traceback 会泄露文件路径与内部实现，是常见的信息泄露源。 #}
+      <div class="who">
+        请求路径：<code>{{ request_path or '/' }}</code> · 如需排查请查看服务端控制台输出
+      </div>
+    </div>
+
+  </body>
+</html>

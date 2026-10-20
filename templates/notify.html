@@ -1,0 +1,466 @@
+{% extends "base.html" %}
+{% set page_title = "通知配置 | CyberGuard 安全运营平台" %}
+{% set nav_active = "notify" %}
+
+{# 本页由 base.html 提供导航栏、身份下拉与公共脚本，此处只关注页面内容。 #}
+
+{% block content %}
+  <div class="main-content page-enter">
+    <div class="container-fluid px-4 py-3">
+
+      <!-- ============ 顶部说明：为什么需要去重与限流 ============ -->
+      <div class="card-dark mb-4 cg-rv cg-rv-delay-1">
+        <div class="card-header-dark">
+          <span>告警邮件通知</span>
+          <span class="text-muted" style="font-size:.7rem">仅管理员可配置</span>
+        </div>
+        <div class="card-body-dark">
+          <div class="text-secondary" style="font-size:.82rem;line-height:1.9">
+            当没有人盯着大屏时，把达标的高危告警推送到值班人邮箱。
+            <br>
+            由于攻击浪潮<strong>突袭期的告警速率可达每分数十条</strong>，若每条都发一封邮件，
+            收件箱会在几分钟内被淹没 —— 这在安全运营中称为
+            <strong>告警疲劳（alert fatigue）</strong>，其真实后果是值班人直接关闭通知，
+            反而漏掉真正的高危事件。因此本系统采用三层防护：
+            <strong>去重 → 限流 → 聚合</strong>。
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 投递统计 ============ -->
+      <div class="card-dark mb-4 cg-rv cg-rv-delay-1">
+        <div class="card-header-dark"><span>投递统计</span></div>
+        <div class="card-body-dark">
+          <div class="alert-stat-row" id="statsRow">
+            <div class="alert-stat"><div class="as-value" id="stTotal">--</div><div class="as-label">评估告警</div></div>
+            <div class="alert-stat"><div class="as-value text-green" id="stSent">--</div><div class="as-label">实际投递</div></div>
+            <div class="alert-stat"><div class="as-value text-orange" id="stSuppressed">--</div><div class="as-label">被抑制</div></div>
+            <div class="alert-stat"><div class="as-value text-cyan" id="stRate">--</div><div class="as-label">抑制率</div></div>
+          </div>
+          <div class="mock-note" id="statsNote">正在加载...</div>
+        </div>
+      </div>
+
+      <div class="row g-4">
+        <!-- ============ 左列：SMTP 配置 ============ -->
+        <div class="col-lg-6">
+          <div class="card-dark h-100 cg-rv cg-rv-delay-2">
+            <div class="card-header-dark"><span>SMTP 服务器</span></div>
+            <div class="card-body-dark">
+              <div class="text-muted mb-3" style="font-size:.74rem;line-height:1.8">
+                密码不会以明文回显。也可改用环境变量注入（优先级高于此处配置）：
+                <code id="envHint">--</code>
+              </div>
+
+              <div class="row g-2">
+                <div class="col-8">
+                  <label class="form-label text-secondary" style="font-size:.75rem">SMTP 服务器</label>
+                  <input class="form-control form-control-dark" id="smtpHost" placeholder="例如 smtp.qq.com">
+                </div>
+                <div class="col-4">
+                  <label class="form-label text-secondary" style="font-size:.75rem">端口</label>
+                  <input class="form-control form-control-dark" id="smtpPort" placeholder="465">
+                </div>
+                <div class="col-12">
+                  <label class="form-label text-secondary" style="font-size:.75rem">加密方式</label>
+                  <select class="form-select form-select-dark" id="smtpTls">
+                    <option value="1">SSL/TLS 直连（常用端口 465）</option>
+                    <option value="0">STARTTLS（常用端口 587）</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <label class="form-label text-secondary" style="font-size:.75rem">登录账号</label>
+                  <input class="form-control form-control-dark" id="smtpUser" placeholder="your@mail.com">
+                </div>
+                <div class="col-12">
+                  <label class="form-label text-secondary" style="font-size:.75rem">授权码 / 密码</label>
+                  <input class="form-control form-control-dark" id="smtpPass" type="password"
+                  placeholder="留空或保持 ******** 表示不修改">
+                </div>
+                <div class="col-12">
+                  <label class="form-label text-secondary" style="font-size:.75rem">发件人（From）</label>
+                  <input class="form-control form-control-dark" id="smtpSender" placeholder="CyberGuard <your@mail.com>">
+                </div>
+              </div>
+
+              <div class="d-flex flex-wrap gap-2 mt-3">
+                <button class="btn-glow" id="saveSmtpBtn">保存 SMTP 配置</button>
+                <button class="btn-dark" id="testBtn">发送测试邮件</button>
+              </div>
+              <div class="mt-2" id="smtpResult" style="font-size:.78rem"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ 右列：通知规则 ============ -->
+        <div class="col-lg-6">
+          <div class="card-dark h-100 cg-rv cg-rv-delay-2">
+            <div class="card-header-dark"><span>通知规则</span></div>
+            <div class="card-body-dark">
+              <div class="row g-2">
+                <div class="col-6">
+                  <label class="form-label text-secondary" style="font-size:.75rem">最低通知等级</label>
+                  <select class="form-select form-select-dark" id="ruleMinRisk">
+                    <option value="高危">高危</option>
+                    <option value="中危">中危及以上</option>
+                    <option value="低危">全部</option>
+                  </select>
+                </div>
+                <div class="col-6">
+                  <label class="form-label text-secondary" style="font-size:.75rem">去重窗口（分钟）</label>
+                  <input class="form-control form-control-dark" id="ruleDedup" type="number" min="1" max="120">
+                </div>
+                <div class="col-6">
+                  <label class="form-label text-secondary" style="font-size:.75rem">限流：每窗口最多几封</label>
+                  <input class="form-control form-control-dark" id="ruleMax" type="number" min="1" max="50">
+                </div>
+                <div class="col-6">
+                  <label class="form-label text-secondary" style="font-size:.75rem">限流窗口（分钟）</label>
+                  <input class="form-control form-control-dark" id="ruleWindow" type="number" min="1" max="120">
+                </div>
+                <div class="col-6">
+                  <label class="form-label text-secondary" style="font-size:.75rem">聚合窗口（秒）</label>
+                  <input class="form-control form-control-dark" id="ruleAgg" type="number" min="0" max="300">
+                </div>
+                <div class="col-6">
+                  <label class="form-label text-secondary" style="font-size:.75rem"
+                         data-cg-tip="该时段内产生的告警只入库、不投递邮件，避免夜间打扰；放行等级见右侧。">静默时段</label>
+                  <input class="form-control form-control-dark" id="ruleQuiet" placeholder="22:00-08:00（留空则关闭）">
+                </div>
+                <div class="col-12">
+                  <label class="form-label text-secondary" style="font-size:.75rem">静默时段内仍放行的等级</label>
+                  <select class="form-select form-select-dark" id="ruleQuietRisk">
+                    <option value="高危">仅高危</option>
+                    <option value="中危">中危及以上</option>
+                    <option value="低危">全部放行</option>
+                  </select>
+                </div>
+              </div>
+              <div class="mock-note">
+                静默时段的设计依据：非工作时间的推送涉及员工休息权，真实企业普遍设置静默期。
+                聚合窗口把窗口内多条告警合并为一封摘要邮件，这是对抗告警疲劳最有效的手段。
+              </div>
+              <button class="btn-glow mt-2" id="saveRulesBtn">保存通知规则</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 收件人管理 ============ -->
+      <div class="card-dark mt-4 cg-rv cg-rv-delay-3">
+        <div class="card-header-dark">
+          <span>通知收件人</span>
+          <span class="text-muted" style="font-size:.7rem">可为不同值班人设置不同的接收等级</span>
+        </div>
+        <div class="card-body-dark">
+          <div class="row g-2 mb-3">
+            <div class="col-md-4">
+              <input class="form-control form-control-dark" id="newEmail" placeholder="邮箱地址，如 oncall@example.com">
+            </div>
+            <div class="col-md-3">
+              <input class="form-control form-control-dark" id="newName" placeholder="备注名（可选），如 值班A">
+            </div>
+            <div class="col-md-3">
+              <select class="form-select form-select-dark" id="newRisk">
+                <option value="高危">仅接收高危</option>
+                <option value="中危">中危及以上</option>
+                <option value="低危">接收全部</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <button class="btn-glow w-100" id="addRecipientBtn">添加</button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-dark table-hover mb-0">
+              <thead>
+                <tr>
+                  <th style="width:60px">ID</th>
+                  <th>邮箱</th>
+                  <th style="width:150px">备注名</th>
+                  <th style="width:150px"
+                      title="该收件人接收的最低告警等级：高危 = 只发高危；中危及以上 = 高危 + 中危；接收全部 = 三个等级都发。">接收等级</th>
+                  <th style="width:120px">状态</th>
+                  <th style="width:120px">操作</th>
+                </tr>
+              </thead>
+              <tbody id="recipientsTable">
+                <tr><td colspan="6"><div class="cg-skel"><i></i><i></i><i></i></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 投递记录 ============ -->
+      <div class="card-dark mt-4 mb-5 cg-rv cg-rv-delay-3">
+        <div class="card-header-dark">
+          <span>投递记录</span>
+          <button class="btn-dark" id="refreshLogsBtn" style="font-size:.76rem">刷新</button>
+        </div>
+        <div class="card-body-dark">
+          <div class="text-muted mb-2" style="font-size:.74rem">
+            每一次"本该通知"的告警都会留下记录，包括被去重、被限流、被静默跳过的 ——
+            这样才能回答"为什么这条告警我没收到邮件"。
+          </div>
+          <div class="table-responsive">
+            <table class="table table-dark table-hover table-sm mb-0">
+              <thead>
+                <tr>
+                  <th style="width:140px">时间</th>
+                  <th style="width:110px">状态</th>
+                  <th>告警类型</th>
+                  <th style="width:80px">等级</th>
+                  <th style="width:130px">来源 IP</th>
+                  <th>说明</th>
+                  <th style="width:70px">耗时</th>
+                </tr>
+              </thead>
+              <tbody id="logsTable">
+                <tr><td colspan="7"><div class="cg-skel"><i></i><i></i><i></i></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+  var ME_ADMIN = {{ 'true' if is_admin else 'false' }};
+
+  var STATUS_MAP = {
+    sent:            { text: '已投递', cls: 'text-green' },
+    failed:          { text: '投递失败', cls: 'text-red' },
+    deduped:         { text: '已去重', cls: 'text-orange' },
+    rate_limited:    { text: '已限流', cls: 'text-orange' },
+    skipped_quiet:   { text: '静默跳过', cls: 'text-muted' },
+    skipped_below_risk: { text: '低于阈值', cls: 'text-muted' },
+    skipped_no_recipient: { text: '无收件人', cls: 'text-orange' },
+    skipped_not_configured: { text: '未配置 SMTP', cls: 'text-orange' }
+  };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function loadOverview() {
+    $.get('/api/notify/overview').done(function (d) {
+      var s = d.smtp || {};
+      $('#smtpHost').val(s.host || '');
+      $('#smtpPort').val(s.port || '465');
+      $('#smtpTls').val(String(s.use_tls || '1'));
+      $('#smtpUser').val(s.user || '');
+      $('#smtpSender').val(s.sender || '');
+      $('#smtpPass').attr('placeholder', s._has_password ? '已设置（留空不修改）' : '授权码 / 密码');
+      // 环境变量名逐个列出，便于运维按需注入而不落库
+      var ek = d.env_keys || {};
+      $('#envHint').text([ek.host, ek.port, ek.user, ek.password, ek.sender]
+        .filter(Boolean).join(' · '));
+
+      var r = d.rules || {};
+      $('#ruleMinRisk').val(r.min_risk || '高危');
+      $('#ruleDedup').val(r.dedup_minutes || 5);
+      $('#ruleMax').val(r.rate_limit_max || 3);
+      $('#ruleWindow').val(r.rate_limit_window_minutes || 5);
+      $('#ruleAgg').val(r.aggregate_seconds || 12);
+      $('#ruleQuiet').val(r.quiet_hours || '');
+      $('#ruleQuietRisk').val(r.quiet_min_risk || '高危');
+
+      renderRecipients(d.recipients || []);
+      renderStats(d.stats || {});
+    }).fail(function (x) {
+      if (x.status === 403) {
+        $('#recipientsTable').html('<tr><td colspan="6" class="text-center py-4 text-red">权限不足：通知配置仅限管理员</td></tr>');
+      }
+    });
+  }
+
+  function renderStats(st) {
+    $('#stTotal').text(st.total || 0);
+    $('#stSent').text(st.sent || 0);
+    $('#stSuppressed').text(st.suppressed || 0);
+    $('#stRate').text((st.suppress_rate || 0) + '%');
+    var by = st.by_status || {};
+    var parts = Object.keys(by).map(function (k) {
+      var m = STATUS_MAP[k] || { text: k };
+      return m.text.replace(/^[^ ]+ /, '') + ' ' + by[k];
+    });
+    $('#statsNote').text(parts.length
+      ? '明细：' + parts.join(' · ') + '　—　抑制率越高，说明去重与限流正在发挥作用。'
+      : '暂无投递记录。引燃一波攻击或发送测试邮件后会产生记录。');
+  }
+
+  function renderRecipients(list) {
+    if (!list.length) {
+      $('#recipientsTable').html('<tr><td colspan="6" class="text-center py-4 text-muted">'
+        + '暂无收件人。请在上方添加邮箱，否则告警不会发送给任何人。</td></tr>');
+      return;
+    }
+    var h = '';
+    list.forEach(function (r) {
+      var riskOpts = ['高危', '中危', '低危'].map(function (x) {
+        var label = x === '高危' ? '高危' : (x === '中危' ? '中危及以上' : '接收全部');
+        return '<option value="' + x + '"' + (r.min_risk === x ? ' selected' : '') + '>' + label + '</option>';
+      }).join('');
+      h += '<tr class="data-flash">'
+        + '<td class="text-mono">' + r.id + '</td>'
+        + '<td class="text-mono">' + esc(r.email) + '</td>'
+        + '<td>' + (esc(r.name) || '<span class="text-muted">--</span>') + '</td>'
+        + '<td><select class="form-select form-select-dark form-select-sm risk-sel" data-id="' + r.id + '">'
+        + riskOpts + '</select></td>'
+        // 启用/停用改用真实 checkbox 开关（T3 弹性开关组件）：
+        // 语义上它是「开/关」而不是「点一下按钮」，checkbox 才能被键盘
+        // 与读屏正确识别；视觉上仍由 CSS 完全重绘。
+        + '<td><input type="checkbox" class="cg-switch" data-id="' + r.id
+        + '" data-enabled="' + (r.enabled ? 1 : 0) + '"'
+        + (r.enabled ? ' checked' : '')
+        + ' aria-label="' + (r.enabled ? '停用' : '启用') + '收件人 ' + esc(r.email) + '"></td>'
+        + '<td><button class="btn-mini danger del-recipient" data-id="' + r.id + '" data-email="'
+        + esc(r.email) + '">删除</button></td>'
+        + '</tr>';
+    });
+    $('#recipientsTable').html(h);
+  }
+
+  function loadLogs() {
+    $.get('/api/notify/logs', { limit: 60 }).done(function (rows) {
+      if (!rows.length) {
+        $('#logsTable').html('<tr><td colspan="7"><div class="cg-empty">暂无投递记录</div></td></tr>');
+        return;
+      }
+      $('#logsTable').html(rows.map(function (r) {
+        var m = STATUS_MAP[r.status] || { text: r.status, cls: '' };
+        return '<tr>'
+          + '<td class="text-mono" style="font-size:.76rem">' + esc(r.created_at) + '</td>'
+          + '<td class="' + m.cls + '" style="font-size:.76rem">' + m.text + '</td>'
+          + '<td style="font-size:.78rem">' + esc(r.alert_type || '--') + '</td>'
+          + '<td style="font-size:.76rem">' + esc(r.risk_level || '--') + '</td>'
+          + '<td class="text-mono" style="font-size:.76rem">' + esc(r.source_ip || '--') + '</td>'
+          + '<td class="text-muted" style="font-size:.73rem">' + esc(r.detail || '') + '</td>'
+          + '<td class="text-mono" style="font-size:.74rem">' + (r.latency_ms != null ? r.latency_ms + 'ms' : '--') + '</td>'
+          + '</tr>';
+      }).join(''));
+    });
+  }
+
+  // ---------- 事件 ----------
+  $('#saveSmtpBtn').click(function () {
+    var payload = {
+      host: $('#smtpHost').val().trim(),
+      port: $('#smtpPort').val().trim(),
+      use_tls: $('#smtpTls').val(),
+      user: $('#smtpUser').val().trim(),
+      password: $('#smtpPass').val(),
+      sender: $('#smtpSender').val().trim()
+    };
+    $.ajax({ url: '/api/notify/smtp', method: 'POST', contentType: 'application/json',
+             data: JSON.stringify(payload) })
+      .done(function (r) { cgToast(r.message, 'ok'); $('#smtpPass').val(''); loadOverview(); loadLogs(); })
+      .fail(function (x) { cgToast((x.responseJSON || {}).message || '保存失败', 'err'); });
+  });
+
+  $('#testBtn').click(function () {
+    var b = $(this).prop('disabled', true).text('发送中...');
+    $('#smtpResult').html('<span class="text-muted">正在连接 SMTP 并投递...</span>');
+    $.ajax({ url: '/api/notify/test', method: 'POST', contentType: 'application/json', data: '{}' })
+      .done(function (r) {
+        $('#smtpResult').html('<span class="text-green"> ' + esc(r.message) + '</span><br>'
+          + '<span class="text-muted">收件人：' + esc((r.recipients || []).join(', ') || '（无）') + '</span>');
+        cgToast('测试邮件已发出', 'ok');
+      })
+      .fail(function (x) {
+        var m = (x.responseJSON || {}).message || ('HTTP ' + x.status);
+        $('#smtpResult').html('<span class="text-red"> ' + esc(m) + '</span><br>'
+          + '<span class="text-muted">请检查服务器地址、端口、加密方式与授权码；'
+          + '部分邮箱需先在网页端开启 SMTP 服务。</span>');
+        cgToast('测试邮件发送失败', 'err');
+      })
+      .always(function () { b.prop('disabled', false).text(' 发送测试邮件'); loadLogs(); loadOverview(); });
+  });
+
+  $('#saveRulesBtn').click(function () {
+    var payload = {
+      min_risk: $('#ruleMinRisk').val(),
+      dedup_minutes: $('#ruleDedup').val(),
+      rate_limit_max: $('#ruleMax').val(),
+      rate_limit_window_minutes: $('#ruleWindow').val(),
+      aggregate_seconds: $('#ruleAgg').val(),
+      quiet_hours: $('#ruleQuiet').val().trim(),
+      quiet_min_risk: $('#ruleQuietRisk').val()
+    };
+    $.ajax({ url: '/api/notify/rules', method: 'POST', contentType: 'application/json',
+             data: JSON.stringify(payload) })
+      .done(function (r) { cgToast(r.message, 'ok'); loadOverview(); })
+      .fail(function (x) { cgToast((x.responseJSON || {}).message || '保存失败', 'err'); });
+  });
+
+  $('#addRecipientBtn').click(function () {
+    $.ajax({ url: '/api/notify/recipients', method: 'POST', contentType: 'application/json',
+             data: JSON.stringify({ email: $('#newEmail').val().trim(),
+                                    name: $('#newName').val().trim(),
+                                    min_risk: $('#newRisk').val() }) })
+      .done(function (r) {
+        cgToast(r.message, 'ok');
+        $('#newEmail').val(''); $('#newName').val('');
+        loadOverview();
+      })
+      .fail(function (x) { cgToast((x.responseJSON || {}).message || '添加失败', 'err'); });
+  });
+
+  $(document).on('change', '.risk-sel', function () {
+    $.ajax({ url: '/api/notify/recipients/update/' + $(this).data('id'), method: 'POST',
+             contentType: 'application/json', data: JSON.stringify({ min_risk: $(this).val() }) })
+      .done(function (r) { cgToast(r.message, 'ok'); })
+      .fail(function (x) { cgToast((x.responseJSON || {}).message || '更新失败', 'err'); loadOverview(); });
+  });
+
+  // 开关用 change 而非 click：键盘空格键切换也会触发 change，click 不会。
+  // 请求失败时必须把开关拨回原位 —— 否则界面显示"已启用"而后端仍是停用，
+  // 这是最容易让使用者误判的配置类 bug。
+  $(document).on('change', '.cg-switch', function () {
+    var self = this;
+    var id = $(self).data('id'), cur = $(self).data('enabled');
+    var want = cur ? 0 : 1;
+    $.ajax({ url: '/api/notify/recipients/update/' + id, method: 'POST',
+             contentType: 'application/json', data: JSON.stringify({ enabled: want }) })
+      .done(function (r) {
+        $(self).data('enabled', want);
+        cgToast(r.message, 'ok');
+        loadOverview();
+      })
+      .fail(function (x) {
+        $(self).prop('checked', !!cur);          // 回滚到操作前状态
+        cgToast((x.responseJSON || {}).message || '操作失败', 'err');
+      });
+  });
+
+  $(document).on('click', '.del-recipient', function () {
+    var id = $(this).data('id'), email = $(this).data('email'), self = this;
+    cgConfirm('确定要从通知收件人中移除「' + email + '」吗？移除后该邮箱将不再收到任何告警邮件。',
+              { title: '移除收件人', icon: '', danger: true, okText: '确认移除' })
+      .then(function (yes) {
+        if (!yes) return;
+        $.ajax({ url: '/api/notify/recipients/delete/' + id, method: 'POST',
+                 contentType: 'application/json', data: '{}' })
+          .done(function (r) { cgToast(r.message, 'ok'); loadOverview(); })
+          .fail(function (x) { cgToast((x.responseJSON || {}).message || '删除失败', 'err'); });
+      });
+  });
+
+  $('#refreshLogsBtn').click(loadLogs);
+
+  $(function () {
+    if (!ME_ADMIN) return;
+    loadOverview();
+    loadLogs();
+    setInterval(loadLogs, 20000);
+  });
+  </script>
+{% endblock %}

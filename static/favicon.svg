@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    CyberGuard 站点图标
+    ------------------------------------------------------------
+    造型：盾牌（安全） + 内部折线（流量监测）。
+    颜色：与站点中性石墨调色板一致 —— 底色 #1a1a1e 呼应卡片底，
+          描边用主色 #5b7fa6，折线用语义色（正常绿 / 高危红），
+          使浏览器标签页与页面本身属于同一套视觉语言。
+    说明：使用 SVG 而非位图，任意尺寸下都清晰，且体积极小（约 0.6KB）。
+  -->
+  <rect width="64" height="64" rx="12" fill="#1a1a1e"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="11.5"
+        fill="none" stroke="#2c2c33" stroke-width="1"/>
+
+  <!-- 盾牌轮廓 -->
+  <path d="M32 9 L51 16.5 V31 C51 43.5 43.2 51.8 32 55.5
+           C20.8 51.8 13 43.5 13 31 V16.5 Z"
+        fill="none" stroke="#5b7fa6" stroke-width="3"
+        stroke-linejoin="round"/>
+
+  <!-- 内部流量折线：一段上升的高峰，呼应"攻击态势" -->
+  <path d="M19 37 L25 37 L28.5 26 L33 44 L37 31 L41 37 L45 37"
+        fill="none" stroke="#34d399" stroke-width="3"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 峰值点用高危红标注，与页面中"高值=红"的语义一致 -->
+  <circle cx="33" cy="44" r="2.6" fill="#f26b6b"/>
+</svg>

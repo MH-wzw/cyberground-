@@ -1,0 +1,423 @@
+{% extends "base.html" %}
+{% set page_title = "攻击链分析 | DDoS 防护监控" %}
+{% set nav_active = "chain" %}
+
+{# 本页由 base.html 提供导航栏、身份下拉与公共脚本，此处只关注页面内容。 #}
+
+{% block head_extra %}
+  <script src="/static/vendor/echarts.min.js"></script>
+  <script src="/static/vendor/socket.io.min.js"></script>
+{% endblock %}
+
+{% block page_css %}
+  <style>
+    /* 桑基图容器 */
+    #sankeyChart { width: 100%; height: 450px; }
+    /* 时间线柱状图 */
+    #timelineChart { width: 100%; height: 300px; }
+
+
+    /* TOP 攻击者卡片 */
+    .top-attacker-card {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      transition: all var(--transition-fast);
+      cursor: pointer;
+      animation: slideInRight 0.4s ease forwards;
+    }
+    .top-attacker-card:hover { background: rgba(79,70,229,.10); }
+
+    /* 排名徽章 — 金/银/铜 + 普通 */
+    .rank-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; margin-right: 10px; }
+    .rank-1 { background: linear-gradient(135deg, #fbbf24, var(--accent-orange)); color: #000; }
+    .rank-2 { background: linear-gradient(135deg, #9ca3af, #6b7280); color: #fff; }
+    .rank-3 { background: linear-gradient(135deg, #d97706, #92400e); color: #fff; }
+    .rank-other { background: var(--bg-input); color: var(--text-secondary); }
+
+    /* 攻击链阶段标签 */
+    .chain-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.7rem; margin: 2px; }
+    .chain-badge.attack { background: rgba(185,28,28,0.15); color: var(--accent-red); border: 1px solid rgba(185,28,28,0.3); }
+    .chain-badge.mitigate { background: rgba(4,120,87,0.15); color: var(--accent-green); border: 1px solid rgba(4,120,87,0.3); }
+    .chain-badge.success { background: rgba(4,120,87,0.15); color: var(--accent-green); border: 1px solid rgba(4,120,87,0.3); }
+    .chain-badge.active { background: rgba(185,28,28,0.15); color: #ff6b6b; border: 1px solid rgba(185,28,28,0.3); animation: pulse-badge 2s ease-in-out infinite; }
+
+    /* 时间线节点样式 */
+    .timeline-node { display: flex; align-items: flex-start; margin-bottom: 12px; position: relative; }
+    .timeline-node::before { content: ''; position: absolute; left: 7px; top: 18px; bottom: -12px; width: 2px; background: var(--border-subtle); }
+    .timeline-node:last-child::before { display: none; }
+    .timeline-dot { width: 14px; height: 14px; border-radius: 50%; margin-right: 12px; flex-shrink: 0; margin-top: 3px; }
+    .timeline-dot.attack { background: var(--accent-red); box-shadow: 0 0 10px rgba(185,28,28,0.5); }
+    .timeline-dot.mitigate { background: var(--accent-green); box-shadow: 0 0 10px rgba(4,120,87,0.5); }
+    .timeline-dot.detect { background: var(--accent-orange); box-shadow: 0 0 10px rgba(180,83,9,0.5); }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <!-- ============================================================
+       主内容区 — 攻击链桑基图 + TOP10攻击者 + 时间线 + 攻击链详情
+       ============================================================ -->
+  <div class="main-content page-enter">
+
+    <!-- ===== 统计卡片 ===== -->
+    <div class="bento">
+      <!-- 活跃攻击链数 -->
+      <div class="stat-card danger cg-rv d1"><div class="stat-value" id="statActiveAtk">0</div><div class="stat-label">活跃攻击链</div>
+      </div>
+      <!-- 总攻击流量 -->
+      <div class="stat-card warning cg-rv d1"><div class="stat-value" id="statTotalBW">0</div><div class="stat-label">总攻击流量 Mbps</div>
+      </div>
+      <!-- 已拦截链数 -->
+      <div class="stat-card success cg-rv d1"><div class="stat-value" id="statMitigated">0</div><div class="stat-label">已拦截链数</div>
+      </div>
+      <!-- 平均响应时间 -->
+      <div class="stat-card info cg-rv d1"><div class="stat-value" id="statAvgTime">--</div><div class="stat-label">接口平均耗时<span class="src-badge real" title="由服务端 after_request 钩子真实测量最近 200 次请求的耗时，非随机数">实时采集</span></div>
+      </div>
+    </div>
+
+    <div class="bento" style="grid-template-columns: 2.5fr 1fr;">
+      <!-- ===== 攻击链桑基图 — 展示攻击流向 ===== -->
+      <div class="card-dark cg-rv d2">
+        <div class="card-header-dark">
+          <span>攻击链路流向图</span>
+          <small class="text-muted">实时攻击流 | <span id="chainUpdateTime">--</span></small>
+        </div>
+        <div class="card-body-dark"><div id="sankeyChart"></div></div>
+      </div>
+
+      <!-- ===== TOP10 攻击者排行 ===== -->
+      <div class="card-dark cg-rv d2">
+        <div class="card-header-dark"><span>TOP10 攻击者</span></div>
+        <div class="card-body-dark p-0" id="topAttackersList" style="max-height:440px;overflow-y:auto;">
+          <div class="cg-skel"><i></i><i></i><i></i></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bento" style="grid-template-columns: 2fr 1fr;">
+      <!-- ===== 攻击时间线柱状图 ===== -->
+      <div class="card-dark cg-rv d3">
+        <div class="card-header-dark"><span>攻击时间线</span></div>
+        <div class="card-body-dark"><div id="timelineChart"></div></div>
+      </div>
+
+      <!-- ===== 最近攻击链详情 ===== -->
+      <div class="card-dark cg-rv d3">
+        <div class="card-header-dark"><span>攻击链详情</span></div>
+        <div class="card-body-dark p-0" id="chainDetailList" style="max-height:290px;overflow-y:auto;">
+          <div class="cg-empty">等待攻击数据</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 数据来源与合规边界 —— 折叠至页脚，默认收起，内容一字未删。
+         原先每张卡片挂一个「沙箱模拟」徽章，一句话重复 4 次：
+         重复不会提高可信度，只会让橙黄色块变成事实上的第二强调色，
+         反过来稀释「实时采集」徽章的价值。合规说明讲清楚一次即可。 -->
+    <details class="cg-src-fold">
+      <summary>数据来源与合规边界</summary>
+      <div class="dl-body">
+        <span class="dl-item"><span class="dl-dot sim"></span>沙箱模拟：攻击链 / 时间线 / 攻击者排行（内存推演，不产生真实报文）</span>
+        <span class="dl-item"><span class="dl-dot real"></span>实时采集：接口平均耗时（服务端 after_request 钩子真实测量）</span>
+      </div>
+    </details>
+  </div>
+
+
+
+  <!-- ============================================================
+       JavaScript — 桑基图 + 时间线 + TOP10 攻击者 + 攻击链详情
+       ============================================================ -->
+
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    const socket = io();
+    let sankeyChart, timelineChart;
+    let chains = [];           // 攻击链数据
+    let topAttackers = [];     // TOP 攻击者数据
+
+    /** 初始化图表实例 */
+    function initCharts() {
+      sankeyChart = echarts.init(document.getElementById('sankeyChart'));
+      timelineChart = echarts.init(document.getElementById('timelineChart'));
+      window.addEventListener('resize', () => { sankeyChart?.resize(); timelineChart?.resize(); });
+    }
+
+    /**
+     * 渲染攻击链路桑基图
+     *
+     * 桑基图（Sankey Diagram）展示流量从源到目标的流向：
+     * 源IP → 攻击类型 → 目标端口 → 防护节点 → 缓解结果
+     *
+     * 多条攻击链的节点和链接会聚合，避免图表过于复杂
+     */
+    function updateSankey(chains) {
+      if (!sankeyChart || !chains.length) {
+        sankeyChart?.setOption({
+          title: { text: '等待攻击数据...', left: 'center', top: 'center', textStyle: { color: CG.faint, fontSize: 16 } }
+        });
+        return;
+      }
+
+      // 聚合所有攻击链的节点和链接
+      const nodeMap = {};
+      const linkMap = {};
+      chains.forEach(chain => {
+        (chain.nodes || []).forEach(node => {
+          const key = node.name;
+          if (!nodeMap[key]) { nodeMap[key] = { name: key, category: node.category || 'other', count: 0 }; }
+          nodeMap[key].count += 1;
+        });
+        (chain.links || []).forEach(link => {
+          const key = `${link.source}->${link.target}`;
+          if (!linkMap[key]) { linkMap[key] = { source: link.source, target: link.target, value: 0 }; }
+          linkMap[key].value += link.value || 1;
+        });
+      });
+
+      const nodes = Object.values(nodeMap);
+      const links = Object.values(linkMap).map(l => ({ ...l, value: Math.max(Math.round(l.value), 1) }));
+
+      // 节点类别颜色映射
+      const categoryColors = {
+        source: CG.red, attack: CG.orange, target: CG.c1,
+        mitigation: CG.green, result: CG.c2, other: CG.faint
+      };
+
+      sankeyChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'item', triggerOn: 'mousemove', backgroundColor: 'rgba(15,13,30,0.95)', borderColor: CG.axis, textStyle: { color: CG.text } },
+        series: [{
+          type: 'sankey', layout: 'none', layoutIterations: 0,
+          emphasis: { focus: 'adjacency' },  // 悬停时高亮相邻节点
+          nodeAlign: 'left',                  // 节点左对齐
+          data: nodes.map(n => ({
+            name: n.name,
+            itemStyle: { color: categoryColors[n.category] || CG.faint, borderColor: 'transparent' },
+            label: { color: CG.text2, fontSize: 10 },
+            lineStyle: { color: 'rgba(255,255,255,0.1)' }
+          })),
+          links: links.map(l => ({
+            source: l.source, target: l.target, value: l.value,
+            lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.3 }
+          })),
+          lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.3 },
+          label: { position: 'right', color: CG.text2, fontSize: 10 }
+        }]
+      });
+    }
+
+    /* ---- 实时攻击事件线 ----
+       历史问题：服务端每个 tick 只推 timeline 最后 3 条，且平静期不产生
+       新事件 → 图表经常纹丝不动（"刷新频率跟不上"）。
+       现改为本地滚动窗口：每个 ddos_update tick（1.5s）采一个点，
+       柱高 = 当前活跃攻击带宽合计，有新攻击事件的 tick 叠加琥珀散点，
+       平静期也会显示 0 值心跳柱 —— 图表每拍必动，阶段一眼可辨。 */
+    let liveTicks = [];      // [{ t, bw, ev: [事件...] }] 最多 20 点
+    const evSeen = {};        // 事件去重键（time|source|type）
+
+    function tickNow() {
+      const d = new Date();
+      const p = n => (n < 10 ? '0' : '') + n;
+      return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+
+    function pushTick(atkBw, events) {
+      const evs = [];
+      (events || []).forEach(ev => {
+        const k = ev.time + '|' + ev.source + '|' + ev.type;
+        if (!evSeen[k]) { evSeen[k] = 1; evs.push(ev); }
+      });
+      liveTicks.push({ t: tickNow(), bw: Math.max(0, Math.round(atkBw || 0)), ev: evs });
+      if (liveTicks.length > 20) liveTicks.shift();
+    }
+
+    /** 渲染攻击事件线（tick 柱 = 攻击带宽，散点 = 新攻击事件） */
+    function updateTimeline() {
+      if (!timelineChart) return;
+      if (!liveTicks.length) {
+        timelineChart.setOption({ title: { text: '等待数据...', left: 'center', top: 'center', textStyle: { color: CG.faint, fontSize: 14 } } });
+        return;
+      }
+      const times = liveTicks.map(d => d.t);
+      const bw = liveTicks.map(d => d.bw);
+      const marks = [];
+      liveTicks.forEach((d, i) => {
+        if (d.ev.length) marks.push({ value: [i, Math.max(d.bw, bwMax() * 0.06)], evs: d.ev });
+      });
+      function bwMax() { return Math.max(...bw, 10); }
+      timelineChart.setOption({
+        backgroundColor: 'transparent',
+        animationDurationUpdate: 300,
+        animationEasingUpdate: 'cubicOut',
+        title: { text: '' },
+        tooltip: Object.assign({
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter: ps => {
+            const d = liveTicks[ps[0].dataIndex];
+            if (!d) return '';
+            let html = '<b>' + d.t + '</b> · 活跃攻击带宽 ' + d.bw + ' Mbps';
+            d.ev.forEach(ev => {
+              html += '<br/>' + (ev.type || '--') + ' · ' + (ev.source || '--') +
+                      ' · ' + (ev.status || '--') + ' · ' + Math.round(ev.bandwidth || 0) + ' Mbps';
+            });
+            return html;
+          }
+        }, window.CG_TOOLTIP || {}),
+        grid: { left: 55, right: 20, top: 20, bottom: 46 },
+        xAxis: { type: 'category', data: times, boundaryGap: true,
+                 axisLine: { lineStyle: { color: CG.axis } },
+                 axisLabel: { color: CG.faint, fontSize: 10, rotate: 38 } },
+        yAxis: { type: 'value', name: 'Mbps',
+                 axisLine: { lineStyle: { color: CG.axis } },
+                 axisLabel: { color: CG.faint }, nameTextStyle: { color: CG.faint },
+                 splitLine: { lineStyle: { color: CG.split, type: 'dashed' } } },
+        series: [
+          {
+            name: '攻击带宽', type: 'bar', data: bw, barWidth: '58%',
+            itemStyle: {
+              borderRadius: [4, 4, 0, 0],
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1,
+                [{ offset: 0, color: CG.red }, { offset: 1, color: 'rgba(248,113,113,.08)' }])
+            }
+          },
+          {
+            name: '攻击事件', type: 'scatter', data: marks, symbolSize: 9,
+            itemStyle: { color: CG.warn, borderColor: 'rgba(11,13,16,.9)', borderWidth: 1 }
+          }
+        ]
+      });
+    }
+
+    /** 渲染 TOP10 攻击者排行列表 */
+    function updateTopAttackers(attackers) {
+      const container = document.getElementById('topAttackersList');
+      if (!attackers || !attackers.length) {
+        container.innerHTML = '<div class="cg-empty">暂无攻击者数据</div>';
+        return;
+      }
+      container.innerHTML = attackers.slice(0, 10).map((a, i) => {
+        const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'rank-other';
+        return `
+ <div class="top-attacker-card" style="animation-delay:${i*0.05}s">
+ <div class="d-flex align-items-center">
+ <span class="rank-badge ${rankClass}">${i+1}</span>
+ <div style="flex:1">
+ <div class="text-mono" style="font-size:0.8rem">${a.ip}</div>
+ <div style="font-size:0.65rem;color:var(--text-muted)">${a.country||'未知'} | ${(a.types||[]).join(', ')||'-'}</div>
+ </div>
+ <div class="text-end">
+ <div style="font-size:1rem;font-weight:700;font-family:var(--font-mono);color:var(--accent-red)">${(a.bandwidth||0).toFixed(0)}<small style="font-size:0.6rem">Mbps</small></div>
+ <div style="font-size:0.65rem;color:var(--text-muted)">${a.count||0} 次攻击</div>
+ </div>
+ </div>
+ </div>`;
+      }).join('');
+    }
+
+    /** 渲染攻击链详情列表 */
+    function updateChainDetails(chains) {
+      const container = document.getElementById('chainDetailList');
+      if (!chains || !chains.length) {
+        container.innerHTML = '<div class="cg-empty">等待攻击链数据</div>';
+        return;
+      }
+      container.innerHTML = chains.slice(0, 6).map((chain, i) => {
+        const lastNode = chain.nodes?.[4]?.name || chain.nodes?.[chain.nodes?.length - 1]?.name || '--';
+        /* 是否成功按服务端给出的 mitigated 字段判断，不靠中文措辞匹配
+           （详见 updateStats 的注释：includes() 会漏掉「限速中」）。 */
+        const isSuccess = chain.mitigated === true;
+        return `
+ <div class="p-2" style="border-bottom:1px solid var(--border-subtle);animation:slideInRight 0.3s ease forwards;animation-delay:${i*0.04}s">
+ <div class="d-flex justify-content-between align-items-center mb-1">
+ <strong class="text-mono" style="font-size:0.75rem">${chain.attack_id||'N/A'}</strong>
+ <span class="chain-badge ${isSuccess?'success':'active'}">${lastNode}</span>
+ </div>
+ <div style="font-size:0.7rem;color:var(--text-muted)">${(chain.timeline||[]).map(t => `<span class="chain-badge ${t.stage.includes('攻击')?'attack':t.stage.includes('拦截')||t.stage.includes('清洗')?'mitigate':'chain-badge'}">${t.stage}</span>`).join(' → ')}</div>
+ </div>`;
+      }).join('');
+    }
+
+    /** 更新统计卡片 */
+    function updateStats() {
+      document.getElementById('statActiveAtk').textContent = chains.length;
+      const totalBW = chains.reduce((s, c) => s + (c.links || []).reduce((ls, l) => ls + (l.value || 0), 0), 0);
+      document.getElementById('statTotalBW').textContent = Math.round(totalBW);
+      /* 「已拦截链数」按服务端给出的 mitigated 布尔字段计数。
+         不要再用 status 的中文措辞判断：已拦截 / 已清洗 / 限速中 三者
+         同属"已缓解"，靠 includes() 会漏掉「限速中」，导致该指标系统性少算。 */
+      const mitigated = chains.filter(c => c.mitigated === true).length;
+      document.getElementById('statMitigated').textContent = mitigated;
+      // 修复：「接口平均耗时」原先是一个 2~7 秒区间的随机数，
+      // 每次刷新都在跳，属于纯随机而非任何测量值。
+      // 现改为服务端 after_request 钩子真实测量最近 200 次请求的耗时均值。
+      fetch('/api/host').then(r => r.ok ? r.json() : null).then(h => {
+        if (!h) return;
+        const el = document.getElementById('statAvgTime');
+        if (el) el.textContent = (h.request_avg_ms === null || h.request_avg_ms === undefined)
+          ? '--' : h.request_avg_ms + ' ms';
+      }).catch(() => {});
+      document.getElementById('chainUpdateTime').textContent = new Date().toLocaleTimeString();
+    }
+
+    /* 统一的数据落地入口 —— 三个数据来源（HTTP 定时 / WebSocket / ddos_update）
+       都走这里，避免桑基图更新了但榜单没更新这类不一致。
+       说明：原实现里这里还负责更新 3D 地球；地球因性能开销过大已移除，
+       因此只保留图表与统计的更新。 */
+    function applyChainData(d) {
+      if (!d) return;
+      chains = d.chains || chains;
+      topAttackers = d.top_attackers || topAttackers;
+
+      updateSankey(chains);
+      updateTopAttackers(topAttackers);
+      updateChainDetails(chains);
+      updateStats();
+    }
+
+    // ===== WebSocket 事件 =====
+    socket.on('connect', () => { cgSetConnState(true); socket.emit('request_full_state'); });
+    socket.on('disconnect', (reason) => cgSetConnState(false, reason));
+    socket.on('connect_error', (err) => cgSetConnState(false, err && err.message));
+
+    // 接收全量状态 —— 统一走 applyChainData()（其定义在文件末尾，
+    // 与 3D 地球共用同一入口，避免"图表更新了但地球没更新"这类不一致）
+    socket.on('full_state', state => {
+      if (!state) return;
+      applyChainData({ chains: state.attack_chains, top_attackers: state.top_attackers,
+                       mitigation_nodes: state.mitigation_nodes });
+      // 用历史事件铺一遍事件线（每个事件一个点），保证首屏非空
+      (state.timeline || []).forEach(ev => { evSeen[ev.time + '|' + ev.source + '|' + ev.type] = 1; });
+      liveTicks = (state.timeline || []).slice(-20).map(ev =>
+        ({ t: ev.time, bw: Math.round(ev.bandwidth || 0), ev: [ev] }));
+      updateTimeline();
+    });
+
+    // 实时更新：每 1.5s 采一个事件线心跳点；桑基/榜单降到每 2 拍拉一次
+    let chainTick = 0;
+    socket.on('ddos_update', data => {
+      if (!data) return;
+      const atkBw = (data.attacks || []).reduce((s, a) => s + (a.bandwidth_mbps || 0), 0);
+      pushTick(atkBw, data.timeline);
+      updateTimeline();
+      if ((chainTick++ % 2) === 0) {
+        fetch('/api/ddos/attack-chain').then(r => r.json()).then(applyChainData).catch(() => {});
+      }
+    });
+
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', () => {
+      initCharts();
+      // 立即拉一次，避免图表空白到下一个 5 秒周期
+      fetch('/api/ddos/attack-chain').then(r => r.json()).then(applyChainData).catch(() => {});
+    });
+
+    // 定时刷新（5 秒间隔）
+    setInterval(() => {
+      fetch('/api/ddos/attack-chain').then(r => r.json()).then(applyChainData).catch(() => {});
+    }, 5000);
+  </script>
+{% endblock %}

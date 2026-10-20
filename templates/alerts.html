@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+{% set page_title = "告警管理 | CyberGuard DDoS" %}
+{% set nav_active = "alerts" %}
+
+{# 本页由 base.html 提供导航栏、身份下拉与公共脚本，此处只关注页面内容。 #}
+
+{% block content %}
+  <div class="main-content page-enter">
+    <div class="container-fluid px-4 py-3">
+
+      <!--
+      ============================================================================
+      告警筛选卡片
+      ============================================================================
+      两个筛选维度：
+        - 风险等级：高危 / 中危 / 低危（由 detector.py 根据攻击严重程度设定）
+          · 高危：成功突破 + 多IP协同攻击（blacklist 168h/720h）
+          · 中危：IP高频失败 + 字典攻击（blacklist 12h/24h）
+          · 低危：慢速爆破（blacklist 6h）
+        - 状态：未处理 / 已处理 / 误报
+
+      筛选在前端执行（applyFilters），不发送后端请求。
+      原理：从 originalAlerts 拷贝 → 按条件 filter → 更新 allAlerts → 重新渲染。
+      ============================================================================
+    -->
+      <div class="card-dark mb-4 cg-rv d1">
+        <div class="card-header-dark">
+          <span>告警筛选</span>
+          <!-- 导出按钮直接置于筛选栏，方便快速操作 -->
+          <button id="exportBtn" class="btn-glow success">导出Excel</button>
+        </div>
+        <div class="card-body-dark">
+          <form id="filterForm" class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label text-secondary" style="font-size:0.8rem">风险等级</label>
+              <select class="form-select-dark form-select" id="filterSource">
+                <option value="">全部来源</option>
+                <option value="ddos">DDoS 攻击（沙箱模拟）</option>
+                <option value="login">登录检测（真实数据）</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label text-secondary" style="font-size:0.8rem">风险等级</label>
+              <select class="form-select-dark form-select" id="filterRisk"><option value="">全部</option><option value="高危">高危</option><option value="中危">中危</option><option value="低危">低危</option></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label text-secondary" style="font-size:0.8rem">状态</label>
+              <select class="form-select-dark form-select" id="filterStatus"><option value="">全部</option><option value="未处理">未处理</option><option value="已处理">已处理</option><option value="误报">误报</option></select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+              <button type="submit" class="btn-glow me-2">筛选</button>
+              <button type="button" class="btn-dark me-2" id="resetBtn">重置</button>
+              <button type="button" class="btn-dark" id="refreshBtn">刷新</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!--
+      ============================================================================
+      告警记录列表卡片
+      ============================================================================
+      表格列：告警时间、告警类型、风险等级、攻击IP、尝试次数、状态、操作
+
+      风险等级 Badge 样式：
+        - 高危 → badge-risk-high（红色脉冲动画）
+        - 中危 → badge-risk-medium（橙色）
+        - 低危 → badge-risk-low（黄色）
+
+      操作：
+        每个告警行的"处理"按钮触发 Modal 弹窗，选择处理状态并填写备注。
+      ============================================================================
+    -->
+      <div class="card-dark cg-rv d2">
+        <div class="card-header-dark">
+          <span>告警记录列表</span>
+          <span class="text-muted" style="font-size:.7rem">含登录检测告警（真实）与 DDoS 攻击告警（沙箱模拟）两类来源</span>
+        </div>
+        <div class="card-body-dark">
+          <div class="table-responsive">
+            <table class="table table-dark table-hover">
+              <thead><tr><th>告警时间</th><th>告警类型</th><th>风险等级</th><th>攻击IP</th><th>尝试次数</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody id="alertsTable"><tr><td colspan="7"><div class="cg-skel"><i></i><i></i><i></i></div></td></tr></tbody>
+            </table>
+          </div>
+          <nav><ul class="pagination justify-content-center mt-3" id="pagination"></ul></nav>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+  ============================================================================
+  处理告警模态框 (Modal)
+  ============================================================================
+  通过 Bootstrap 5 Modal 组件实现，包含两个表单字段：
+    1. 处理状态（下拉选择）：已处理 / 误报 / 忽略
+    2. 处理备注（文本域）：自由文本，用于记录处理原因或措施
+
+  提交流程：
+    submitHandle() → AJAX POST /api/alerts/update/{id}
+    → 后端 UPDATE alerts SET status=?, note=? WHERE id=?
+    → 成功后关闭 Modal、清空备注输入框、重新加载告警列表
+  ============================================================================
+-->
+  <div class="modal fade modal-dark" id="handleModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title text-cyan">处理告警</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <form id="handleForm">
+            <!-- 隐藏域：存储当前处理的告警 ID -->
+            <input type="hidden" id="alertId">
+            <div class="mb-3">
+              <label class="form-label text-secondary" style="font-size:0.8rem">处理状态</label>
+              <select class="form-select-dark form-select" id="alertStatus"><option value="已处理">已处理</option><option value="误报">误报</option><option value="忽略">忽略</option></select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label text-secondary" style="font-size:0.8rem">处理备注</label>
+              <textarea class="form-control-dark form-control" id="alertNote" rows="3" placeholder="输入处理备注"></textarea>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-dark" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn-glow" id="submitHandleBtn">提交</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+  ============================================================================
+  JavaScript 业务逻辑
+  ============================================================================
+  全局状态变量：
+    originalAlerts - 后端返回的原始告警数据（不可变引用，用于筛选恢复）
+    allAlerts      - 当前展示的告警数据（经筛选后，用于分页渲染）
+    itemsPerPage   - 每页显示条数
+    currentPage    - 当前页码
+
+  数据保护机制（重要）：
+    applyFilters() 中先执行 originalAlerts.slice() 创建浅拷贝，再在此基础上 filter。
+    这确保 originalAlerts 永远不会被修改，重置筛选时只需在拷贝上不加任何条件即可。
+
+  告警数据字段说明（后端 SQL 查询返回的元组索引）：
+    a[0] = 告警ID, a[1] = 告警时间, a[2] = 告警类型, a[3] = 风险等级
+    a[4] = 攻击IP, a[5] = 目标用户名, a[6] = 尝试次数, a[7] = 告警详情
+    a[8] = 处理状态, a[9] = 处理备注
+  ============================================================================
+-->
+{% endblock %}
+
+{% block scripts %}
+  <script>
+  // 当前身份是否为管理员（由服务端渲染注入）——仅用于界面降级，权限判定以服务端为准
+  window.IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+
+  // 双数组策略：originalAlerts 保持原始数据不动，allAlerts 用于展示
+  let allAlerts=[],originalAlerts=[],itemsPerPage=10,currentPage=1;
+
+  // Bootstrap Modal 实例：用于后续的 show()/hide() 调用
+  const handleModal=new bootstrap.Modal(document.getElementById('handleModal'));
+
+  /**
+   * 页面初始化 - 事件绑定
+   * 1. 筛选表单提交 → applyFilters()（前端筛选，无后端请求）
+   * 2. 重置按钮 → 清空表单并重新应用筛选（等同于无筛选条件）
+   * 3. 刷新按钮 → 从后端重新拉取数据
+   * 4. 导出按钮 → 跳转后端导出接口
+   * 5. 处理提交按钮 → 发送 POST 请求更新告警状态
+   */
+  $(function(){
+    loadAlerts();
+    $('#filterForm').submit(function(e){e.preventDefault();applyFilters();});
+    $('#resetBtn').click(function(){$('#filterForm')[0].reset();applyFilters();});
+    $('#refreshBtn').click(function(){loadAlerts();});
+    $('#exportBtn').click(function(){window.location.href='/api/alerts/export';});
+    $('#submitHandleBtn').click(function(){submitHandle();});
+  });
+
+  /**
+   * 轻量主题化通知 — 替代原生 alert()
+   * 原生 alert() 会弹出系统级白底对话框，破坏暗色科技风演示的沉浸感。
+   */
+  function cgToast(msg, kind, ms){
+    let w = document.getElementById('cgToastWrap');
+    if(!w){
+      w = document.createElement('div');
+      w.id = 'cgToastWrap'; w.className = 'cg-toast-wrap';
+      document.body.appendChild(w);
+    }
+    const el = document.createElement('div');
+    el.className = 'cg-toast ' + (kind || '');
+    el.textContent = msg;
+    w.appendChild(el);
+    setTimeout(function(){
+      el.style.opacity = '0'; el.style.transition = 'opacity .3s';
+      setTimeout(function(){ el.remove(); }, 320);
+    }, ms || 2600);
+  }
+
+  /**
+   * 从后端加载告警数据
+   * GET /api/alerts → 返回所有告警的 JSON 数组
+   * 数据存入 originalAlerts（原始引用），然后调用 applyFilters() 初始化展示
+   */
+  function loadAlerts(){
+    $.get('/api/alerts')
+      .done(function(d){originalAlerts=d;applyFilters();})
+      .fail(function(x){$('#alertsTable').html('<tr><td colspan="7" class="text-center py-5 text-red">数据加载失败（HTTP '+x.status+'）</td></tr>');});
+  }
+
+  /**
+   * 应用筛选条件（前端过滤）
+   *
+   * 策略说明：
+   *   1. 从 originalAlerts.slice() 创建副本（浅拷贝，元素引用不变）
+   *   2. 根据 risk 下拉值筛选 a[3]（风险等级字段）
+   *   3. 根据 status 下拉值筛选 a[8]（状态字段）
+   *   4. 将筛选结果赋给 allAlerts
+   *   5. 重置 currentPage 为 1 并重新渲染
+   *
+   * 为什么用前端筛选而非后端接口？
+   *   - 告警总量小（mock数据≤100条），无需后端分页
+   *   - 筛选条件简单（仅两个维度）
+   *   - 减少 HTTP 请求次数，响应更快
+   */
+  function applyFilters(){
+    const risk=$('#filterRisk').val(),status=$('#filterStatus').val();
+    const source=$('#filterSource').val();
+    allAlerts=originalAlerts.slice();                // 从原始数据创建副本
+    if(risk) allAlerts=allAlerts.filter(a=>a[3]===risk);    // 按风险等级筛选
+    if(status) allAlerts=allAlerts.filter(a=>a[8]===status); // 按处理状态筛选
+    // 按来源筛选：DDoS 告警的 alert_type 以 "DDoS:" 开头（见 app._persist_ddos_alert）
+    if(source==='ddos')  allAlerts=allAlerts.filter(a=>String(a[2]||'').startsWith('DDoS:'));
+    if(source==='login') allAlerts=allAlerts.filter(a=>!String(a[2]||'').startsWith('DDoS:'));
+    currentPage=1;renderTable();renderPagination();
+  }
+
+  /**
+   * 渲染告警表格
+   *
+   * 风险等级 Badge 映射：
+   *   高危 → badge-risk-high    (CSS 中定义了红色脉冲动画)
+   *   中危 → badge-risk-medium  (橙色静态 Badge)
+   *   低危 → badge-risk-low     (黄色静态 Badge)
+   *
+   * 处理状态样式：
+   *   未处理 → text-red（红色，表示需要关注）
+   *   已处理/误报/忽略 → text-green（绿色，表示已闭环）
+   *
+   * 每行的"处理"按钮通过 data-id 属性存储告警 ID，
+   * 点击时读取该值填充 Modal 的隐藏域，实现"哪个告警被处理"的追踪。
+   */
+  function renderTable(){
+    const start=(currentPage-1)*itemsPerPage,end=start+itemsPerPage,pageAlerts=allAlerts.slice(start,end);
+    let h='';
+    if(!pageAlerts.length){h='<tr><td colspan="7"><div class="cg-empty">暂无数据</div></td></tr>';}
+    else{pageAlerts.forEach(a=>{
+      // 根据风险等级选择对应的 CSS Badge 类
+      const rc=a[3]==='高危'?'badge-risk-high':a[3]==='中危'?'badge-risk-medium':'badge-risk-low';
+    // 来源徽章：DDoS 告警来自内存沙箱，登录类告警来自真实检测规则
+    const isDdos=String(a[2]||'').startsWith('DDoS:');
+    const typeCell=isDdos
+      ? `${a[2]}`
+      : `<span class="src-badge real" title="由 5 条暴力破解检测规则对登录日志的真实判定产生">真实数据</span>${a[2]}`;
+      h+=`<tr class="data-flash"><td class="text-mono" style="font-size:0.8rem">${a[1]}</td><td>${typeCell}</td><td><span class="badge ${rc}">${a[3]}</span></td><td class="text-mono">${a[4]}</td><td>${a[6]}</td><td><span class="${a[8]==='未处理'?'text-red':'text-green'}">${a[8]}</span></td>${IS_ADMIN ? `<button class="btn btn-dark btn-sm handleBtn" data-id="${a[0]}">处理</button>` : `<span class="text-muted" style="font-size:0.72rem">只读</span>`}</tr>`;
+    });}
+    $('#alertsTable').html(h);
+    // 为每个"处理"按钮绑定点击事件：读取告警ID → 填充隐藏域 → 弹出 Modal
+    $('.handleBtn').click(function(){const aid=$(this).data('id');$('#alertId').val(aid);handleModal.show();});
+  }
+
+  /**
+   * 渲染分页组件
+   * 与 logs.html 中的实现一致：Bootstrap 风格、上一页/下一页边界判断
+   */
+  function renderPagination(){
+    const tp=Math.ceil(allAlerts.length/itemsPerPage);
+    if(tp<=1){$('#pagination').html('');return;}
+    const item=(p,label,active,disabled)=>
+      `<li class="page-item ${active?'active':''} ${disabled?'disabled':''}">`+
+      `<a class="page-link" href="#" data-page="${p}">${label||p}</a></li>`;
+    let h=item(currentPage-1,'上一页',false,currentPage===1);
+    const nums=[];
+    if(tp<=7){for(let i=1;i<=tp;i++)nums.push(i);}
+    else{
+      nums.push(1);
+      const s=Math.max(2,currentPage-1),e=Math.min(tp-1,currentPage+1);
+      if(s>2)nums.push('...');
+      for(let i=s;i<=e;i++)nums.push(i);
+      if(e<tp-1)nums.push('...');
+      nums.push(tp);
+    }
+    nums.forEach(n=>{
+      h += (n==='...')
+        ? '<li class="page-item disabled"><span class="page-link">…</span></li>'
+        : item(n,null,n===currentPage,false);
+    });
+    h+=item(currentPage+1,'下一页',false,currentPage===tp);
+    $('#pagination').html(h);
+    $('.page-link').click(function(e){e.preventDefault();const p=parseInt($(this).data('page'));if(p&&p!==currentPage){currentPage=p;renderTable();renderPagination();}});
+  }
+  /**
+   * 提交告警处理
+   * POST /api/alerts/update/{id}
+   * 请求体（JSON）：
+   *   { status: "已处理"|"误报"|"忽略", note: "处理备注文本" }
+   *
+   * 成功回调：
+   *   1. 关闭 Modal → handleModal.hide()
+   *   2. 清空备注输入框 → $('#alertNote').val('')
+   *   3. 重新加载告警列表 → loadAlerts()（刷新整个数据集以获取最新状态）
+   *
+   * 错误回调：
+   *   弹出 alert 提示用户操作失败
+   *   （生产环境建议替换为 Toast 通知以改善用户体验）
+   */
+  function submitHandle(){
+    const alertId=$('#alertId').val(),status=$('#alertStatus').val(),note=$('#alertNote').val().trim();
+    $.ajax({url:`/api/alerts/update/${alertId}`,method:'POST',contentType:'application/json',data:JSON.stringify({status,note}),success:()=>{handleModal.hide();$('#alertNote').val('');loadAlerts();},error:()=>cgToast('处理失败，请重试','err')});
+  }
+  </script>
+{% endblock %}

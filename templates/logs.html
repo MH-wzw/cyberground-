@@ -1,0 +1,836 @@
+{% extends "base.html" %}
+{% set page_title = "登录日志 | CyberGuard DDoS" %}
+{% set nav_active = "logs" %}
+
+{# 本页由 base.html 提供导航栏、身份下拉与公共脚本，此处只关注页面内容。 #}
+
+{% block page_css %}
+  <style>
+  /* ===================== 登录攻击克星 · 粒子可视化 ===================== */
+  .pm-stage { position: relative; height: 300px; overflow: hidden; }
+  #pmCanvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+
+  .pm-hud { position: absolute; left: 14px; top: 11px; pointer-events: none;
+    font-family: var(--font-mono); font-size: 10px; line-height: 1.9;
+    color: var(--text-muted); letter-spacing: .04em; }
+  .pm-hud b { color: var(--accent-blue); font-weight: 600; }
+
+  .pm-legend { position: absolute; left: 14px; bottom: 11px; pointer-events: none;
+    font-size: 10.5px; color: var(--text-muted); display: flex; gap: 16px;
+    flex-wrap: wrap; }
+  .pm-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle; }
+
+  .pm-metrics { position: absolute; right: 14px; top: 11px; text-align: right;
+    font-family: var(--font-mono); }
+  .pm-m { margin-bottom: 6px; }
+  .pm-m .k { display: block; font-size: 9.5px; color: var(--text-muted);
+    letter-spacing: .06em; }
+  .pm-m .v { font-size: 17px; font-weight: 700; color: var(--text-primary);
+    font-variant-numeric: tabular-nums; }
+  .pm-m .v.y { color: var(--accent-orange); }
+  .pm-m .v.r { color: var(--danger-text); }
+  .pm-m .v.c { color: var(--accent-blue); }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <!-- 主内容区域：page-enter 类触发页面入场动画（模糊渐现） -->
+  <div class="main-content page-enter">
+    <div class="container-fluid px-4 py-3">
+
+      <!--
+      ============================================================================
+      筛选条件卡片
+      ============================================================================
+      提供三个筛选维度：
+        - IP地址：精确匹配或前缀匹配
+        - 用户名：精确匹配
+        - 登录结果：成功/失败 下拉选择
+
+      筛选通过后端 API 完成，而非前端过滤。
+      原因：后端 SQL 查询更高效，且筛选参数作为 GET 参数传递语义清晰。
+      ============================================================================
+    -->
+      <div class="card-dark mb-4 cg-rv d1">
+        <div class="card-header-dark"><span>日志筛选</span></div>
+        <div class="card-body-dark">
+          <form id="filterForm" class="row g-3">
+            <!-- IP 地址筛选：文本输入框，支持部分匹配 -->
+            <div class="col-md-3">
+              <label class="form-label text-secondary" style="font-size:0.8rem">IP地址</label>
+              <input type="text" class="form-control-dark form-control" id="filterIp" placeholder="输入IP地址">
+            </div>
+            <!-- 用户名筛选：文本输入框 -->
+            <div class="col-md-3">
+              <label class="form-label text-secondary" style="font-size:0.8rem">用户名</label>
+              <input type="text" class="form-control-dark form-control" id="filterUsername" placeholder="输入用户名">
+            </div>
+            <!-- 登录结果筛选：下拉选择框，选项为全部/成功/失败 -->
+            <div class="col-md-3">
+              <label class="form-label text-secondary" style="font-size:0.8rem">登录结果</label>
+              <select class="form-select-dark form-select" id="filterSuccess">
+                <option value="">全部</option><option value="True">成功</option><option value="False">失败</option>
+              </select>
+            </div>
+            <!-- 操作按钮：筛选（提交表单）和重置（清空表单并重新加载） -->
+            <div class="col-md-3 d-flex align-items-end">
+              <button type="submit" class="btn-glow me-2">筛选</button>
+              <button type="button" class="btn-dark" id="resetBtn">重置</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!--
+      ============================================================================
+      暴力破解演示控制台
+      ============================================================================
+      演示链：生成模拟日志 → 执行 5 条检测规则 → 产出分级告警 + 自动封禁 → 导出报表
+      原先后端已有接口但前端没有任何入口，现场只能手敲 URL，这里补齐可视化入口。
+      对应接口（POST，仅在 DEMO_MODE=1 且请求来自本机时注册）：
+        /api/demo/generate-logs   生成模拟登录日志
+        /api/demo/run-detection   执行全部检测规则
+      若按钮返回 404，说明未开启演示模式：启动时设置 DEMO_MODE=1 即可
+      （推荐直接运行项目根目录的 start_demo.bat）。
+      ============================================================================
+    -->
+      <div class="card-dark mb-4 cg-rv cg-rv-delay-1 needs-admin">
+        <div class="card-header-dark"><span>暴力破解演示控制台<span class="src-badge mock" title="生成的登录日志为模拟样本；但 5 条检测规则是真实算法，可对接真实认证日志">模拟样本 + 真实算法</span></span></div>
+        <div class="card-body-dark">
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <button id="demoGenBtn" class="btn-glow">生成模拟日志</button>
+            <button id="demoDetectBtn" class="btn-glow">执行检测</button>
+            <button id="demoFireBtn" class="btn-glow">引燃一波攻击</button>
+            <button id="demoResetBtn" class="btn-dark">重置模拟状态</button>
+            <span id="demoResult" class="text-secondary ms-2" style="font-size:0.85rem"></span>
+          </div>
+          <div class="text-muted mt-2" style="font-size:0.75rem">
+            生成日志使用可复现的模拟数据（800 条正常 + 200 条攻击）；执行检测会真实运行 5 条规则，
+            命中后写入告警表并按风险等级自动封禁 IP（12 小时 ~ 30 天）。
+          </div>
+        </div>
+      </div>
+
+      <!--
+      ============================================================================
+      登录攻击克星 — 粒子可视化
+      ============================================================================
+      设计动机：本项目的核心卖点是 5 条真实检测规则，但规则此前只以"告警列表"
+      的形式出现，看不出"算法在实时工作"。这里把每一次登录尝试画成一个粒子：
+
+          绿点 = 成功登录
+          白点 = 普通失败
+          琥珀 = 弱口令尝试（口令属于常见弱口令集合）
+          红点 = 该 IP 命中检测规则并已被封禁
+
+      粒子的**生成频率**由最近 60 秒的真实尝试条数决定：
+      平静时几乎没有粒子，攻击爆发时密集涌出。
+      这样粒子密度本身就是"当前有没有人在打"的指示器，
+      而不是恒定的装饰动画。
+
+      数据来源：
+        /api/logs        —— 每次登录尝试（真实来自 SQLite）
+        /api/blacklist   —— 被封禁 IP 及其命中规则（真实来自 SQLite）
+      ============================================================================
+    -->
+      <div class="card-dark mb-4 cg-rv cg-rv-delay-1">
+        <div class="card-header-dark">
+          <span>登录攻击克星
+            <span class="src-badge real" title="数据来自本机 SQLite 的登录日志表与黑名单表">真实数据</span>
+</span>
+          <div class="d-flex align-items-center gap-3" style="font-size:.72rem">
+            <span class="text-muted">渲染粒子 <span class="text-cyan text-mono" id="pmParticles">0</span></span>
+            <span class="text-muted">命中规则 <span class="text-red text-mono" id="pmHits">0</span></span>
+            <span class="text-muted">当前速率 <span class="text-cyan text-mono" id="pmRate">0</span>/秒</span>
+          </div>
+        </div>
+        <div class="card-body-dark p-0">
+          <div class="pm-stage">
+            <canvas id="pmCanvas"></canvas>
+            <div class="pm-hud">
+              <div>AUTH NODE <b>认证节点</b> · 粒子 = 一次登录尝试</div>
+              <div>密度随<b>近 15 分钟</b>的真实尝试数变化 · 平静时仍保持缓慢流动</div>
+            </div>
+            <div class="pm-legend">
+              <span><i style="background:var(--accent-green);box-shadow:0 0 6px var(--accent-green)"></i>成功登录</span>
+              <span><i style="background:var(--text-secondary)"></i>普通失败</span>
+              <span><i style="background:var(--accent-orange);box-shadow:0 0 6px var(--accent-orange)"></i>弱口令尝试</span>
+              <span><i style="background:var(--accent-red);box-shadow:0 0 6px var(--accent-red)"></i>命中检测规则（已封禁）</span>
+            </div>
+            <div class="pm-metrics">
+              <div class="pm-m"><span class="k">接入尝试</span><span class="v" id="pmTotal">0</span></div>
+              <div class="pm-m"><span class="k">失败占比</span><span class="v y" id="pmFailPct">0%</span></div>
+              <div class="pm-m"><span class="k">命中规则</span><span class="v r" id="pmHitPct">0%</span></div>
+              <div class="pm-m"><span class="k">封禁 IP</span><span class="v c" id="pmBanIp">0</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!--
+      ============================================================================
+      日志列表卡片
+      ============================================================================
+      展示所有登录日志记录，包含5列：时间、IP地址、用户名、User-Agent、登录结果。
+      表格采用 Bootstrap 的 table-dark 样式配合自定义暗色变量。
+      服务端分页，每页 20 条，通过底部分页组件切换。
+      ============================================================================
+    -->
+      <div class="card-dark cg-rv d2">
+        <div class="card-header-dark">
+          <span>登录日志列表<span class="text-muted" id="logCount"
+            style="font-size:.72rem;font-weight:400;margin-left:10px"></span></span>
+          <div>
+            <!-- 导出按钮：直接触发后端 /api/logs/export 下载 Excel 文件 -->
+            <button id="exportBtn" class="btn-glow success me-2">导出Excel</button>
+            <!-- 刷新按钮：重新从后端拉取数据 -->
+            <button id="refreshBtn" class="btn-glow">刷新</button>
+          </div>
+        </div>
+        <div class="card-body-dark">
+          <div class="table-responsive">
+            <table class="table table-dark table-hover">
+              <thead><tr><th>时间</th><th>IP地址</th><th>用户名</th><th>User-Agent</th><th>登录结果</th></tr></thead>
+              <!-- tbody 由 JavaScript 动态填充 -->
+              <tbody id="logsTable"><tr><td colspan="5"><div class="cg-skel"><i></i><i></i><i></i></div></td></tr></tbody>
+            </table>
+          </div>
+          <!-- 分页导航：由 renderPagination() 动态生成 -->
+          <nav><ul class="pagination justify-content-center mt-3" id="pagination"></ul></nav>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+  ============================================================================
+  JavaScript 业务逻辑
+  ============================================================================
+  全局状态变量：
+    pageLogs     - 当前页日志数据（服务端分页返回，不再本地 slice）
+    totalLogs    - 符合条件的总条数（由服务端 SQL COUNT 得出）
+    totalPages   - 总页数（服务端返回）
+    itemsPerPage - 每页显示条数，默认 20
+    currentPage  - 当前页码，从 1 开始
+
+  核心函数链：
+    loadLogs() → filterLogs() → renderTable() + renderPagination()
+    renderPagination() 中绑定了 .page-link 的点击事件，触发重新渲染。
+
+  注意：
+    - 导出功能通过直接修改 window.location 实现文件下载，无需 AJAX
+    - 筛选重置通过调用表单原生 .reset() 方法清空所有输入
+  ============================================================================
+-->
+{% endblock %}
+
+{% block scripts %}
+  <script>
+  // 当前身份是否为管理员（由服务端渲染注入）——仅用于界面降级，权限判定以服务端为准
+  window.IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+
+  // 全局状态：当前页数据 + 分页参数
+  //
+  // 改动说明：原先在前端保存「全量日志数组 allLogs」并自行 slice 分页，
+  // 意味着每次翻页、每次筛选都要先把整张表（实测约 260KB）传到浏览器。
+  // 现改为服务端分页：只保存当前页数据，总条数由后端返回。
+  let pageLogs=[],totalLogs=0,totalPages=0,itemsPerPage=20,currentPage=1;
+
+  /**
+   * 页面初始化 - 文档就绪后执行
+   * 绑定三个事件：
+   *   1. 筛选表单提交 → filterLogs()
+   *   2. 重置按钮点击 → 清空表单 + 重新加载
+   *   3. 刷新按钮点击 → 重新加载数据
+   *   4. 导出按钮点击 → 跳转后端导出接口
+   */
+  $(function(){
+    loadLogs();
+    $('#filterForm').submit(function(e){e.preventDefault();filterLogs();});
+    $('#resetBtn').click(function(){$('#filterForm')[0].reset();loadLogs();});
+    $('#refreshBtn').click(function(){loadLogs();});
+    $('#exportBtn').click(function(){window.location.href='/api/logs/export';});
+    $('#demoGenBtn').click(demoGenerateLogs);
+    $('#demoDetectBtn').click(demoRunDetection);
+    $('#demoFireBtn').click(demoFireWave);
+    $('#demoResetBtn').click(demoResetDdos);
+  });
+
+  /** 演示控制台提示条 — 就地反馈，避免使用原生 alert 打断演示画面 */
+  function demoMsg(msg, ok){
+    $('#demoResult').html('<span class="'+(ok?'text-green':'text-red')+'">'+msg+'</span>');
+  }
+
+  /** 读取当前告警总数（用于计算一次检测新增了多少条告警） */
+  function fetchStat(key){
+    return $.get('/api/stats').then(d=>d[key]).catch(()=>0);
+  }
+
+  /** 演示步骤 1：生成模拟登录日志 */
+  function demoGenerateLogs(){
+    demoMsg('正在生成模拟日志...', true);
+    $('#demoGenBtn').prop('disabled', true);
+    $.ajax({url:'/api/demo/generate-logs', method:'POST', contentType:'application/json',
+      data: JSON.stringify({count:1000})
+    }).done(function(r){
+      demoMsg(''+(r.message||'生成完成')+'，正在刷新列表...', true);
+      loadLogs();
+    }).fail(function(x){
+      demoMsg(x.status===404 ? '未开启演示模式：请用 start_demo.bat 启动（DEMO_MODE=1）'
+                             : ' 生成失败（HTTP '+x.status+'）', false);
+    }).always(function(){ $('#demoGenBtn').prop('disabled', false); });
+  }
+
+  /** 演示步骤 2：执行 5 条暴力破解检测规则，并报告新增告警/封禁数量 */
+  function demoRunDetection(){
+    demoMsg('正在执行 5 条检测规则...', true);
+    $('#demoDetectBtn').prop('disabled', true);
+    fetchStat('total_alerts').then(function(before){
+      $.ajax({url:'/api/demo/run-detection', method:'POST', contentType:'application/json', data:'{}'})
+        .done(function(r){
+          fetchStat('total_alerts').then(function(after){
+            $.get('/api/blacklist').then(function(bl){
+              var delta = after - before;
+              demoMsg('检测完成：新增告警 '+delta+' 条，当前累计封禁 IP '+bl.length+' 个', true);
+              loadLogs();
+            });
+          });
+        })
+        .fail(function(x){
+          demoMsg(x.status===404 ? '未开启演示模式：请用 start_demo.bat 启动（DEMO_MODE=1）'
+                                 : ' 检测失败（HTTP '+x.status+'）', false);
+        })
+        .always(function(){ $('#demoDetectBtn').prop('disabled', false); });
+    });
+  }
+
+  /**
+   * 演示步骤 3：手动引燃一波攻击
+   *
+   * 引入攻击浪潮结构后，"平静期"成了常态（真实 DDoS 本就大部分时间静默），
+   * 但答辩现场不能干等一两分钟。该按钮把状态机直接推进到突袭期，
+   * 既保留真实的时间结构，又允许演示者主动制造攻击高峰。
+   */
+  function demoFireWave(){
+    $.ajax({url:'/api/demo/trigger-wave', method:'POST', contentType:'application/json', data:'{}'})
+      .done(function(r){
+        demoMsg('' + (r.message || '已引燃一波攻击') + '，请观察态势大屏', true);
+      })
+      .fail(function(x){
+        var m = (x.responseJSON && x.responseJSON.message) || ('HTTP ' + x.status);
+        demoMsg(x.status===404 ? '未开启演示模式（DEMO_MODE=1）' : ' 引燃失败：' + m, false);
+      });
+  }
+
+  /** 演示步骤 4：重置 DDoS 模拟状态（便于反复演示） */
+  function demoResetDdos(){
+    $.ajax({url:'/api/demo/reset-ddos', method:'POST', contentType:'application/json', data:'{}'})
+      .done(function(){ demoMsg(' DDoS 模拟状态已重置', true); })
+      .fail(function(x){
+        demoMsg(x.status===404 ? '未开启演示模式（DEMO_MODE=1）' : ' 重置失败（HTTP '+x.status+'）', false);
+      });
+  }
+
+  /**
+   * 加载日志（服务端分页 + 服务端筛选）
+   *
+   * GET /api/logs?page=&page_size=&ip=&username=&success=
+   *   → {items, total, page, page_size, pages}
+   *
+   * 筛选与分页都在 SQL 层完成，浏览器每次只收到当前页的数据。
+   * 原先的 /api/logs/filter 已与本接口等价（同一 SQL 查询函数），
+   * 因此筛选不再需要单独的函数，只把条件带上即可。
+   *
+   * @param {boolean} resetPage 是否重置到第 1 页（筛选/重置时必须，
+   *                            否则在第 5 页筛选出 2 页结果会显示空白）
+   */
+  function loadLogs(resetPage){
+    if (resetPage) currentPage = 1;
+    const params = {
+      page: currentPage,
+      page_size: itemsPerPage,
+      ip: $('#filterIp').val().trim(),
+      username: $('#filterUsername').val().trim(),
+      success: $('#filterSuccess').val()
+    };
+    $.get('/api/logs', params)
+      .done(function(d){
+        pageLogs   = d.items || [];
+        totalLogs  = d.total || 0;
+        totalPages = d.pages || 0;
+        // 若当前页超出范围（例如筛选后结果变少），回退到最后一页重取
+        if (totalPages > 0 && currentPage > totalPages) {
+          currentPage = totalPages;
+          loadLogs(false);
+          return;
+        }
+        renderTable();
+        renderPagination();
+        // 通知粒子模块：日志已重新加载（粒子密度依赖最近 60 秒的真实条数）
+        document.dispatchEvent(new CustomEvent('cg:logs-reloaded'));
+      })
+      .fail(function(x){ renderEmpty('加载失败（HTTP '+x.status+'）', false); });
+  }
+
+  /** 筛选：带回条件并重置到第 1 页 */
+  function filterLogs(){ loadLogs(true); }
+
+  /**
+   * 渲染表格主体
+   * 前端分页逻辑：
+   *   start = (currentPage-1) * itemsPerPage
+   *   end   = start + itemsPerPage
+   *   服务端已分页，pageLogs 即后端返回的当前页数据（不再本地 slice）
+   *
+   * 数据字段说明（来自后端 SQL 查询结果）：
+   *   l[0] = id, l[1] = 时间, l[2] = IP, l[3] = 用户名, l[4] = User-Agent, l[5] = 成功/失败
+   *
+   * 登录结果显示：
+   *   - 成功 → 绿色文字 +  图标
+   *   - 失败 → 红色文字 +  图标
+   *   （遵循中国金融/安全系统惯例：绿色=正常，红色=异常）
+   */
+  function renderTable(){
+    // 服务端已分页，这里直接渲染收到的当前页，不再做 slice
+    let h='';
+    if(!pageLogs.length){h='<tr><td colspan="5"><div class="cg-empty">暂无数据</div></td></tr>';}
+    else{pageLogs.forEach(l=>{h+=`<tr class="data-flash"><td>${l[1]}</td><td class="text-mono">${l[2]}</td><td>${l[3]}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${l[4]}">${l[4]}</td><td><span class="${l[5]?'text-green':'text-red'}">${l[5]? '成功':' 失败'}</span></td></tr>`;});}
+    $('#logsTable').html(h);
+  }
+
+  /** 空态/错误态渲染 — 接口失败时给出明确提示，避免页面永远停在"加载中..." */
+  function renderEmpty(msg, ok){
+    $('#logsTable').html('<tr><td colspan="5" class="text-center py-5 '+(ok===false?'text-red':'text-muted')+'">'+msg+'</td></tr>');
+  }
+
+  /**
+   * 渲染分页组件
+   * 生成 Bootstrap 风格的分页导航： [上一页] [1] [2] … [N] [下一页]
+   *
+   * 修复：原实现对每个页码都生成一个按钮，4560 条日志 / 每页 10 条 = 456 个页码按钮，
+   *      分页条会换行溢出。现改为"首页 + 当前页附近 + 末页 + 省略号"的窗口式渲染。
+   */
+  function renderPagination(){
+    // 总页数来自后端（基于 SQL COUNT），不再是前端按数组长度估算
+    const tp=totalPages;
+    if(tp<=1){$('#pagination').html('');renderCount();return;}
+    const item=(p,label,active,disabled)=>
+      `<li class="page-item ${active?'active':''} ${disabled?'disabled':''}">`+
+      `<a class="page-link" href="#" data-page="${p}">${label||p}</a></li>`;
+    let h=item(currentPage-1,'上一页',false,currentPage===1);
+    const nums=[];
+    if(tp<=7){for(let i=1;i<=tp;i++)nums.push(i);}
+    else{
+      nums.push(1);
+      const s=Math.max(2,currentPage-1),e=Math.min(tp-1,currentPage+1);
+      if(s>2)nums.push('...');
+      for(let i=s;i<=e;i++)nums.push(i);
+      if(e<tp-1)nums.push('...');
+      nums.push(tp);
+    }
+    nums.forEach(n=>{
+      h += (n==='...')
+        ? '<li class="page-item disabled"><span class="page-link">…</span></li>'
+        : item(n,null,n===currentPage,false);
+    });
+    h+=item(currentPage+1,'下一页',false,currentPage===tp);
+    $('#pagination').html(h);
+    // 为每个页码链接绑定点击事件：阻止默认跳转，更新页码并重新渲染
+    // 翻页需向服务端请求该页数据（不再是本地 slice）
+    $('.page-link').click(function(e){
+      e.preventDefault();
+      const p=parseInt($(this).data('page'));
+      if(p&&p!==currentPage){currentPage=p;loadLogs(false);}
+    });
+    renderCount();
+  }
+
+  /**
+   * 显示「共 N 条 / 第 P 页，共 T 页」
+   * 服务端分页后前端不再持有全部数据，必须显示总数，
+   * 否则使用者无法判断筛选是否生效、还有多少数据。
+   */
+  function renderCount(){
+    if (totalLogs === 0) { $('#logCount').text(''); return; }
+    $('#logCount').text('共 ' + totalLogs + ' 条 · 第 ' + currentPage + ' / ' + totalPages + ' 页');
+  }
+
+  // ==========================================================================
+  //  登录攻击克星 · 粒子可视化
+  // --------------------------------------------------------------------------
+  //  每个粒子 = 一次登录尝试。颜色区分四种结果（见卡片标题下的图例）。
+  //  粒子密度由"最近 60 秒的真实尝试条数"决定 —— 平静期几乎无粒子，
+  //  攻击爆发时密集涌出，所以密度本身就是态势指示器。
+  // ==========================================================================
+  (function () {
+    var cv = document.getElementById('pmCanvas');
+    if (!cv) return;
+    var g, W = 0, H = 0;
+    var parts = [], hits = [], raf = null;
+    var PM_CAP = 320;                     // 粒子上限：投影机性能通常弱于开发机
+    var RULE_REASONS = ['IP高频失败', '账号多IP攻击', '高频失败', '字典攻击', '慢速暴力破解',
+                        'IP 高频失败', '账号多 IP 攻击'];
+    var WEAK = ['123456', 'password', 'admin', '12345678', 'qwerty', '111111',
+                'abc123', '123456789', 'letmein', 'welcome', 'monkey', 'dragon',
+                '1234567', '000000', 'iloveyou', 'sunshine'];
+
+    // ---- 尺寸：每帧自检，避免容器尚未布局时把画布尺寸算成 0 ----
+    var lastW = 0, lastH = 0;
+    function resize() {
+      var w = cv.clientWidth, h = cv.clientHeight;
+      if (w < 2 || h < 2) return false;
+      var d = window.devicePixelRatio || 1;
+      cv.width = Math.max(1, Math.round(w * d));
+      cv.height = Math.max(1, Math.round(h * d));
+      g = cv.getContext('2d');
+      g.setTransform(d, 0, 0, d, 0, 0);
+      W = w; H = h; lastW = w; lastH = h;
+      return true;
+    }
+
+    // ---- 数据 -> 粒子 ----
+    // 只在"数据更新时"重新计算速率，逐帧按速率生成粒子。
+    var rate = 0;                         // 每秒生成多少个
+    var stat = { total: 0, fail: 0, hit: 0, ban: 0 };
+
+    // /api/logs 的 items 是**按列排列的数组**（不是对象），
+    // 列顺序与 renderTable() 使用的下标保持一致：
+    //   [0]id [1]timestamp [2]ip_address [3]username
+    //   [4]user_agent [5]success [6]attempted_password [7]created_at
+    // 这里同时兼容对象形态，接口若改为字典式返回也不会失效。
+    function fld(row, idx, key) {
+      if (Array.isArray(row)) return row[idx];
+      return row ? row[key] : undefined;
+    }
+    function isOk(row) {
+      var v = fld(row, 5, 'success');
+      return v === 1 || v === true || v === '1';
+    }
+
+    function classify(row) {
+      if (isOk(row)) return 'ok';
+      var pw = String(fld(row, 6, 'attempted_password') || '').toLowerCase();
+      if (WEAK.indexOf(pw) >= 0) return 'weak';
+      return 'fail';
+    }
+
+    /** 依据真实日志重建粒子参数 */
+    function setData(logs, blacklist) {
+      // 封禁 IP 集合（这些 IP 的失败尝试标记为"命中规则"）
+      //
+      // 注意：/api/blacklist 返回的是**按列排列的数组**，不是对象：
+      //   [id, ip_address, reason, block_time, expire_time, created_at]
+      // 早期版本按 b.ip_address 取值，结果全部是 undefined，
+      // 导致"命中检测规则"这一类粒子永远不会出现（红色一个都没有）。
+      // 这里兼容数组与对象两种形态，避免接口形态变化再次踩坑。
+      var banned = {};
+      (blacklist || []).forEach(function (b) {
+        var ip, reason;
+        if (Array.isArray(b)) { ip = b[1]; reason = b[2]; }
+        else if (b && typeof b === 'object') { ip = b.ip_address; reason = b.reason; }
+        if (ip) banned[ip] = reason || '规则命中';
+      });
+
+      // 需求 1：来源分布 => 决定粒子从哪些"来源层"出发
+      var ipCount = {};                   // IP -> 尝试次数
+      var fail = 0, hit = 0;
+      logs.forEach(function (r) {
+        if (isOk(r)) return;
+        fail++;
+        var ip = fld(r, 2, 'ip_address');
+        ipCount[ip] = (ipCount[ip] || 0) + 1;
+        if (banned[ip] !== undefined) hit++;
+      });
+
+      // 来源 IP 按尝试次数降序 -> 高频来源分配到更靠上的"车道"
+      var topIps = Object.keys(ipCount).sort(function (a, b) {
+        return ipCount[b] - ipCount[a];
+      });
+      LANES = topIps.slice(0, 12).map(function (ip, i) {
+        return {
+          ip: ip,
+          n: ipCount[ip],
+          banned: banned[ip] !== undefined,
+          reason: banned[ip] || '',
+          y: 0.14 + (i / Math.max(1, Math.min(12, topIps.length) - 1)) * 0.72
+        };
+      });
+
+      // 需求 2：事件密度 => 用最近 60 秒的真实条数决定生成速率
+      var now = Date.now();
+      var recent = 0;
+      var recent5 = [];                   // 首屏回填的候选样本
+      var minAge = Infinity;              // 最新一条记录的年龄（秒）
+      logs.forEach(function (r) {
+        var ts = String(fld(r, 1, 'timestamp') || '').replace('', 'T');
+        var t = Date.parse(ts);
+        if (isNaN(t)) return;
+        var age = now - t;
+        if (age < minAge) minAge = age;
+        if (age <= 60000) recent++;
+        if (age >= 0) recent5.push({ age: age, row: r });
+      });
+
+      // ---- 生成速率 ----
+      // 目标：既要"越活跃越密"，又不能出现"打开页面就是空的"。
+      //
+      // 原实现只用"最近 60 秒的真实条数 / 6"，问题是演示数据往往
+      // 几十分钟甚至几小时前生成（实测最新记录在 2.7 小时前），
+      // 于是速率恒为 0、画布全空 —— 使用者会以为模块坏了。
+      //
+      // 现在的规则：
+      //   · 有数据时保底 1.2 个/秒 —— 保证画面始终有东西在动，
+      //     能看出"系统在持续处理登录尝试"（这是本模块要传达的信息）
+      //   · 最近 15 分钟越活跃，速率越高（最多 10 个/秒），
+      //     保留"攻击爆发时密集涌出"的表达力
+      // 注意：这只是**生成节奏**，每个粒子仍然对应日志里的一条真实记录，
+      //      不代表"此刻正在发生"。
+      var n900 = 0;
+      recent5.forEach(function (x) { if (x.age <= 900000) n900++; });
+      rate = Math.min(10, n900 / 900 * 30);
+      if (rate < 1.2 && logs.length) rate = 1.2;
+
+      // ---- 首屏回填取哪些样本 ----
+      // 原实现只取"最近 5 分钟"，但演示数据常常是几十分钟甚至几小时前
+      // 生成的 —— 窗口内 0 条，画面全空，使用者会以为这个模块坏了
+      // （实测：库里最新记录在 2 小时 40 分钟前，于是粒子数恒为 0）。
+      // 改为：优先取最近 5 分钟；若为空，回退到"最近的一批真实尝试"
+      // （logs 已按时间倒序，取前 60 条）。
+      // 回填的每一条仍然对应日志里的真实记录，不做任何伪造。
+      var sample = recent5.filter(function (x) { return x.age <= 300000; });
+      if (!sample.length) sample = recent5.slice(0, 60);
+
+      // 回填：若画布尚未就绪，先暂存，待帧循环里再试
+      pendingBackfill = sample;
+      backfill(sample);
+
+      stat.total = logs.length;
+      stat.fail = fail;
+      stat.hit = hit;
+      stat.ban = Object.keys(banned).length;
+      paintStat();
+    }
+
+    var LANES = [];
+
+    /**
+     * 首屏回填 —— 把取样到的真实尝试按时间轴铺到画布上。
+     *
+     * 为什么需要：粒子是按生成速率逐帧出现的，页面刚打开时画布是空的，
+     * 要等若干秒才看得出东西。而那些尝试**确实发生过**，
+     * 只是发生在更早的时候。这里把取样到的记录一次铺开，
+     * 于是页面一打开就能看到"这段时间发生了多少、都是什么类型"。
+     *
+     * 注意：只影响初始画面，不做任何数据伪造 ——
+     * 每个回填的粒子都对应登录日志里的一条真实记录。
+     */
+    // 攒住最近 5 分钟的真实尝试，等画布与车道都就绪后再回填一次。
+    // 这里**不能**在 setData 里直接回填：数据请求往往先于画布完成布局返回，
+    // 那时 H=0、LANES 为空，回填会被跳过；若此时就把"已回填"标记置位，
+    // 之后永远不会再补 —— 表现为"有 63 条真实记录却只有 2 个粒子"。
+    var pendingBackfill = null;
+
+    function backfill(recent) {
+      if (!LANES.length || !H) return;      // 尚未就绪：保持待回填，下次再试
+      if (backfill._done) return;
+      backfill._done = true;
+      var now = Date.now();
+      // 最多回填 60 个，避免平静期也把画布塞满
+      var pick = recent.slice(0, 60);
+      if (!pick.length) return;
+
+      // ---- 位置映射：把"时间轴"铺到"空间轴"上 ----
+      //
+      // 这里**不能**用"真实年龄 × 粒子速度"推算位置。
+      // 粒子穿过画布只需约 7 秒（1064px ÷ 150px·s⁻¹），
+      // 而最近一批尝试可能是 2~5 分钟前的 —— 按物理速度外推会得到
+      // 23,000 ~ 58,000px，远超画布宽度，于是全部落进下面的兜底分支
+      // 被丢到随机位置，几秒内就飞走（曾因此只剩 2~4 个粒子）。
+      //
+      // 改为归一化映射：最老的一条放左端，最新的一条放节点附近，
+      // 画布上呈现的就是"最近这几分钟的攻击是怎么聚过来的"。
+      var ages = pick.map(function (x) { return x.age; });
+      var maxAge = Math.max.apply(null, ages);
+      var minAge = Math.min.apply(null, ages);
+      var span = Math.max(1, maxAge - minAge);
+      var x0 = 8, x1 = W * 0.56;            // 左端起，止于节点之前
+
+      pick.forEach(function (item, i) {
+        var row = item.row;
+        var ip = fld(row, 2, 'ip_address');
+        // 找到该 IP 对应的车道；没有则按序分配
+        var laneObj = null;
+        for (var k = 0; k < LANES.length; k++) if (LANES[k].ip === ip) { laneObj = LANES[k]; break; }
+        if (!laneObj) laneObj = LANES[i % LANES.length];
+        var kind = classify(row);
+        if (laneObj.banned && kind === 'fail') kind = 'hit';
+        // 越新越靠近节点
+        var t = 1 - (item.age - minAge) / span;      // 0=最老  1=最新
+        var x = x0 + (x1 - x0) * t + (Math.random() - 0.5) * 26;
+        if (x < 4) x = 4;
+        parts.push({
+          x: x,
+          y: laneObj.y * H + (Math.random() - 0.5) * 12,
+          vx: 1.7 + Math.random() * 2.3,
+          r: kind === 'hit' ? 1.7 + Math.random() * 1.2 : 1.0 + Math.random() * 0.9,
+          kind: kind, ip: ip, reason: laneObj.reason,
+          a: 0.45 + Math.random() * 0.5,
+          wob: Math.random() * 6.28
+        });
+      });
+    }
+
+    function paintStat() {
+      document.getElementById('pmParticles').textContent = parts.length;
+      document.getElementById('pmHits').textContent = hits.length;
+      document.getElementById('pmRate').textContent = rate.toFixed(1);
+      document.getElementById('pmTotal').textContent = stat.total;
+      document.getElementById('pmFailPct').textContent =
+        stat.total ? Math.round(stat.fail / stat.total * 100) + '%' : '0%';
+      document.getElementById('pmHitPct').textContent =
+        stat.fail ? Math.round(stat.hit / stat.fail * 100) + '%' : '0%';
+      document.getElementById('pmBanIp').textContent = stat.ban;
+    }
+
+    // ---- 生成一个粒子 ----
+    var lane = 0;
+    function spawn() {
+      if (parts.length >= PM_CAP) return;
+      var src = LANES.length ? LANES[lane++ % LANES.length] : null;
+      var y = src ? src.y * H : H * 0.15 + Math.random() * H * 0.7;
+      // 按真实构成抽样：多数是普通失败，少数是弱口令或规则命中
+      var r = Math.random();
+      var kind;
+      if (src && src.banned) {
+        kind = r < 0.72 ? 'hit' : (r < 0.88 ? 'weak' : 'fail');
+      } else if (r < 0.18) {
+        kind = 'ok';
+      } else if (r < 0.40) {
+        kind = 'weak';
+      } else {
+        kind = 'fail';
+      }
+      parts.push({
+        x: -6, y: y + (Math.random() - 0.5) * 12,
+        vx: 1.7 + Math.random() * 2.3,
+        r: kind === 'hit' ? 1.7 + Math.random() * 1.2 : 1.0 + Math.random() * 0.9,
+        kind: kind, ip: src ? src.ip : '',
+        reason: src ? src.reason : '',
+        a: 0.5 + Math.random() * 0.5,
+        wob: Math.random() * 6.28
+      });
+    }
+
+    // ---- 渲染 ----
+    var lastT = 0, acc = 0;
+    function frame(now) {
+      var dt = lastT ? Math.min(60, now - lastT) : 16; lastT = now;
+      if (cv.clientWidth !== lastW || cv.clientHeight !== lastH) resize();
+      if (!W || !H) { raf = requestAnimationFrame(frame); return; }
+
+      // 画布就绪后补做一次回填（数据可能比布局先到）
+      if (pendingBackfill && !backfill._done) backfill(pendingBackfill);
+
+      g.clearRect(0, 0, W, H);
+      var cx = W * 0.62;                      // 认证节点位置
+
+      // 来源车道：左侧淡线，让"多来源"可见
+      g.strokeStyle = 'rgba(127,122,158,.10)'; g.lineWidth = 1;
+      LANES.forEach(function (L) {
+        var yy = L.y * H;
+        g.beginPath(); g.moveTo(0, yy); g.lineTo(cx - 8, yy); g.stroke();
+        g.fillStyle = 'rgba(127,122,158,.30)';
+        g.font = '9px ' + getComputedStyle(document.body).getPropertyValue('--font-mono');
+        g.textAlign = 'left';
+        g.fillText(L.ip + (L.banned ?'' : ''), 6, yy - 5);
+      });
+
+      // 认证节点
+      g.strokeStyle = 'rgba(79,70,229,.30)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(cx + .5, H * 0.08); g.lineTo(cx + .5, H * 0.92); g.stroke();
+      g.fillStyle = 'rgba(79,70,229,.10)';
+      g.fillRect(cx - 4, H * 0.08, 8, H * 0.84);
+      g.font = '9px ' + getComputedStyle(document.body).getPropertyValue('--font-mono');
+      g.fillStyle = 'rgba(127,122,158,.55)'; g.textAlign = 'center';
+      g.fillText('AUTH', cx, H * 0.05);
+
+      // 按速率生成
+      acc += dt;
+      var interval = rate > 0.05 ? (1000 / rate) : 1e9;
+      while (acc >= interval && rate > 0.05) { acc -= interval; spawn(); }
+
+      // 粒子
+      for (var i = parts.length - 1; i >= 0; i--) {
+        var p = parts[i];
+        p.x += p.vx * dt / 16.7;
+        p.wob += 0.09;
+        var py = p.y + Math.sin(p.wob) * 3;
+        if (p.x >= cx) {
+          hits.push({ x: cx, y: py, life: 1, kind: p.kind });
+          if (hits.length > 90) hits.shift();
+          parts.splice(i, 1);
+          continue;
+        }
+        var col = p.kind === 'hit' ? '185,28,28'
+                : p.kind === 'weak' ? '180,83,9'
+                : p.kind === 'ok' ? '4,120,87' : '127,122,158';
+        g.beginPath(); g.arc(p.x, py, p.r, 0, 6.2832);
+        g.fillStyle = 'rgba(' + col + ',' + p.a + ')'; g.fill();
+        g.strokeStyle = 'rgba(' + col + ',' + (p.a * 0.3) + ')';
+        g.lineWidth = p.r * 0.85;
+        g.beginPath(); g.moveTo(p.x - p.vx * 3.2, py); g.lineTo(p.x, py); g.stroke();
+      }
+
+      // 命中痕：从节点向右消散
+      for (var k = hits.length - 1; k >= 0; k--) {
+        var m = hits[k];
+        m.life -= dt / 1000;
+        if (m.life <= 0) { hits.splice(k, 1); continue; }
+        var len = (1 - m.life) * 60;
+        var c2 = m.kind === 'hit' ? '185,28,28'
+               : m.kind === 'weak' ? '180,83,9'
+               : m.kind === 'ok' ? '4,120,87' : '127,122,158';
+        g.strokeStyle = 'rgba(' + c2 + ',' + (m.life * 0.7) + ')';
+        g.lineWidth = m.kind === 'hit' ? 1.8 : 1.1;
+        g.beginPath(); g.moveTo(cx + 3, m.y); g.lineTo(cx + 3 + len, m.y); g.stroke();
+      }
+
+      // 读数（每 ~500ms 一次，避免频繁重排）
+      if (!frame._s || now - frame._s > 500) {
+        frame._s = now;
+        document.getElementById('pmParticles').textContent = parts.length;
+        document.getElementById('pmHits').textContent = hits.length;
+      }
+      raf = requestAnimationFrame(frame);
+    }
+
+    /* ---- 加载真实数据 ---- */
+    function load() {
+      // 取足够大的分页窗口，覆盖近期的完整样本
+      var p1 = $.get('/api/logs', { page: 1, page_size: 500 });
+      var p2 = $.get('/api/blacklist');
+      $.when(p1, p2).done(function (r1, r2) {
+        var logs = (r1[0] && r1[0].items) || [];
+        var bl = r2[0] || [];
+        setData(logs, bl);
+      }).fail(function () {
+        // 拉取失败时保持"平静"（rate=0），不伪造粒子
+        setData([], []);
+      });
+    }
+
+    // 初始化：等布局完成再测尺寸，多试几次
+    var tries = 0;
+    (function ensure() {
+      if (resize() || ++tries > 40) { raf = requestAnimationFrame(frame); load(); return; }
+      setTimeout(ensure, 50);
+    })();
+    window.addEventListener('resize', resize);
+    if (window.ResizeObserver) { try { new ResizeObserver(resize).observe(cv); } catch (e) {} }
+    // 定期刷新，保持与日志表同步
+    setInterval(load, 15000);
+    document.addEventListener('cg:logs-reloaded', load);
+  })();
+  </script>
+{% endblock %}

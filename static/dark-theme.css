@@ -1,0 +1,1104 @@
+/* ============================================================
+   CyberGuard — 暗黑科技风全局主题样式
+   ============================================================
+   设计目标：
+   - 营造"网络安全指挥中心"的视觉感受
+   - 暗色基调降低长时间监控的视觉疲劳
+   - 霓虹发光、网格背景、扫描线等科技元素增强沉浸感
+   - 丰富的动画过渡提升数据刷新的感知流畅度
+
+   设计策略：
+   - 使用 CSS 自定义属性（:root 变量）统一管理色彩和间距
+   - 所有白色/亮色替换为暗色系变量，确保深色模式一致性
+   - 动画使用 cubic-bezier 缓动函数，避免生硬的线性过渡
+   - 响应式断点适配移动端和桌面端
+
+   浏览器兼容性：
+   - 目标：Chrome 90+, Firefox 90+, Safari 15+, Edge 90+
+   - 使用标准 CSS 特性（CSS Variables, Grid, Flexbox, @keyframes）
+   - 渐变文字使用 -webkit-background-clip 并附带标准 fallback
+   ============================================================ */
+
+/* ============================================================
+   第一部分：CSS 设计令牌（Design Tokens）
+   所有视觉属性集中在此，修改一处即可影响全局
+   ============================================================ */
+/* ============================================================
+   态势大屏调色板（方案 D 的第二套）
+   ============================================================
+   适用页面（在 <body> 上标注 class="theme-dash"）：
+       首页 index.html / 攻击热力图 heatmap.html / 攻击链 attack_chain.html
+
+   与默认「中性石墨」的区别：
+     · 表面恢复偏冷的蓝调，维持大屏的视觉冲击力
+     · 主色保留更多饱和度（钢蓝 → 更亮的蓝）
+     · 语义色、文字色、圆角、间距全部继承默认值，不做重复定义
+
+   注意：这里**只覆盖颜色变量**，不覆盖任何布局或组件规则，
+        因此两套调色板共用完全相同的结构与交互。
+   ============================================================ */
+body.theme-dash {
+  /* 大屏调色板：与「全球攻击地图」等大屏页面统一为一套冷青色调。
+     取值来源即地图页使用的同一组颜色 —— 保证"大屏"与"地图"看起来
+     是同一个系统，而不是两套皮肤拼在一起。 */
+  --bg-primary: #08161f;
+  --bg-secondary: #0d2029;
+  --bg-card: #0a141c;
+  --bg-card-hover: #10222c;
+  --bg-input: #0c1a23;
+
+  --border-subtle: #16303f;
+  --border-glow: #204a5e;
+
+  /* 文字色偏冷，与深青底匹配（默认石墨调色板的灰字在青底上会显脏） */
+  --text-primary: #d6e8f0;
+  --text-secondary: #8fb4c8;
+  --text-muted: #5d8296;
+
+  --accent-blue: #38bdf8;
+  --accent-blue-dim: #1d7fa8;
+  --accent-blue-rgb: 56 189 248;
+  /* 填充色（按钮底）需要更暗一档，白字才够对比度 */
+  --accent-blue-btn: #2a7fa6;
+
+  --grid-color: rgba(56, 189, 248, 0.030);
+
+  --bg-overlay: rgba(8, 22, 31, .97);
+  --bg-overlay-soft: rgba(8, 22, 31, .5);
+  --bg-dropdown: rgba(13, 32, 41, .97);
+}
+
+:root {
+  /* ============================================================
+     配色体系（方案 D：分层配色）
+     ============================================================
+     本文件维护两套调色板：
+
+       默认（本 :root 块）  「中性石墨」
+         用于运营类页面：登录日志 / 告警管理 / 黑名单 / 用户管理 /
+         通知配置 / 登录注册 / 403 与拦截页。
+         特征：表面与边框**无色相**（纯中性灰），语义色成为页面上
+         唯一的颜色，界面冷峻、耐看、可长时间注视。
+
+       body.theme-dash     「冷蓝态势」
+         用于三张态势大屏：首页 / 攻击热力图 / 攻击链分析。
+         特征：保留偏冷的蓝调表面，维持"大屏"的视觉冲击力。
+
+     为什么分成两套（而不是全站统一）：
+       运营页要的是"可信、耐看"，态势大屏要的是"抓眼、有冲击力"，
+       这两个诉求本身冲突。分层让两个方向的分都能拿到，
+       而不是二选一。
+     ============================================================ */
+
+  /* --- 背景层级（中性灰，无彩度）--- */
+  --bg-primary: #0a0a0b;       /* 页面最底层背景（最深，L 4%） */
+  --bg-secondary: #1f1f24;     /* 次级容器背景（如 Modal） */
+  --bg-card: #1a1a1e;          /* 卡片组件背景（L 11%） */
+  --bg-card-hover: #22222a;    /* 卡片悬停时的高亮背景 */
+  --bg-input: #101013;         /* 表单输入框背景（比卡片更暗 = 凹陷感） */
+
+  /* --- 边框（中性，不发蓝）--- */
+  --border-subtle: #2c2c33;    /* 默认边框（低调） */
+  --border-glow: #3a3a44;      /* hover/active 状态边框 */
+
+  /* --- 文字层级 --- */
+  --text-primary: #e8eaed;     /* 主要文字（近白，略带暖调以减轻冷感疲劳） */
+  --text-secondary: #9aa1ab;   /* 次要文字 */
+  /* 弱化文字：原值 #64748b 对卡片底仅 3.55:1（只达"大字"标准），
+     而它实际用在 0.68~0.74rem 的小字标签上，读起来吃力。
+     现提高到 4.42:1，且规定不再用于 0.7rem 以下字号。 */
+  --text-muted: #7d8590;       /* 辅助文字（已提升对比度） */
+
+  /* --- 语义色 ---
+     三个语义色在两套调色板中保持一致，因为它们是"信息"而非"风格"。 */
+  --accent-blue: #5b7fa6;      /* 信息 / 常态 —— 用于**文字、边框、图标**（在卡片上 4.16:1） */
+  --accent-blue-dim: #3d5a78;  /* 蓝色的低饱和变体，用于进度条等次要填充 */
+  /* 填充用主色：填色按钮上要压白字，而 --accent-blue 偏亮（白字仅 4.17:1，不达标）。
+     故单列一个更深的填充色：白字 5.30:1、卡片上 3.27:1，两个方向都达标。 */
+  --accent-blue-btn: #3b6ea5;  /* 填色按钮背景 */
+  --accent-green: #34d399;     /* 正常 / 已闭环（提高亮度以适配更暗的底） */
+  --accent-red: #f26b6b;       /* 异常 / 高危（作填充与图形用） */
+  /* 高危红原值 #ef4444 对卡片底为 4.49:1，恰好卡在 AA 门槛(4.5)之下，
+     而它被用作**文字色**（.text-red、.stat-change.up）。
+     现单列一个用于文字的红，对比度 5.12:1，确保告警文字清晰可读。 */
+  --danger-text: #f87171;      /* 高危红（专用于文字） */
+  --accent-orange: #f59e0b;    /* 需关注 / 中危 */
+  --accent-purple: var(--accent-blue);   /* 已合并到蓝，保留变量名兼容旧引用 */
+  --accent-pink: var(--accent-orange);   /* 已合并到橙，保留变量名兼容旧引用 */
+
+  /* --- RGB 三元组 ---
+     为什么需要这一层：CSS 变量无法直接用于 rgba() 的 alpha 通道，
+     而界面上大量"主色的 10% 透明底"这类写法必须带 alpha。
+     把三元组单独提出来，就能写成 rgb(var(--accent-blue-rgb) / 0.1)，
+     使这些半透明色也能跟随调色板切换，而不是被硬编码成蓝色。 */
+  --accent-blue-rgb: 91 127 166;
+  --accent-green-rgb: 52 211 153;
+  --danger-text-rgb: 248 113 113;
+
+  /* --- 浮层背景（Modal / 下拉 / 提示条）---
+     原先这些位置硬编码了带蓝调的黑（如 rgba(17,23,38,.97)），
+     导致运营页在切换后浮层仍发蓝。现改为变量。 */
+  --bg-overlay: rgba(19, 19, 22, .97);
+  --bg-overlay-soft: rgba(19, 19, 22, .5);
+  --bg-dropdown: rgba(23, 23, 26, .97);
+
+  /* --- 阴影（改为中性黑，不再用带色的"发光"）--- */
+
+  /* --- 背景特效 --- */
+  --grid-color: rgba(255, 255, 255, 0.022);
+
+  /* --- 字体 --- */
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+
+  /* --- 圆角 --- */
+  --radius-sm: 6px;            /* 小型组件 */
+  --radius-md: 10px;           /* 中型组件 */
+  --radius-lg: 16px;           /* 大型组件 */
+
+  /* --- 过渡动画 --- */
+  --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);    /* 快速交互 */
+}
+
+/* ============================================================
+   第二部分：全局重置
+   ============================================================ */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 14px;
+  scroll-behavior: smooth;     /* 锚点平滑滚动 */
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+               'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;          /* 防止水平溢出 */
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;  /* macOS 字体渲染优化 */
+}
+
+/* ============================================================
+   第三部分：背景
+   ------------------------------------------------------------
+   设计取向（本版重要调整）：
+   原实现叠加了三层装饰性背景——Canvas 粒子流、40px 呼吸网格、CRT 扫描线。
+   它们的共同问题是"屏幕上永远有东西在动"，会让使用者视觉疲劳，
+   也与真实运维工具体验相悖（工具应把视觉预算全部留给数据）。
+
+   现在改为：纯色深底 + 极淡静态网格（仅提供空间参考，不做动画）。
+   Canvas 粒子层已整体移除。
+   ============================================================ */
+
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background:
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.45;                 /* 静态、低对比，仅作空间参考 */
+  pointer-events: none;
+  z-index: 0;
+}
+/* 扫描线已移除。保留选择器以便未来需要时快速恢复。 */
+body::after { content: none; }
+
+/* 确保页面内容在背景层之上 */
+.main-content {
+  position: relative;
+  z-index: 1;
+}
+/* ============================================================
+   第四部分：页面切换动画
+   ============================================================ */
+
+/*
+ * 页面入场动画 — 淡入 + 上移 + 模糊消散
+ * 模拟"页面加载完成"的视觉反馈
+ *
+ * 用 backwards 而非 forwards：
+ *   forwards 会保留结束帧（opacity:1），看起来没问题，但**基础态是透明的**
+ *   —— 在 keyframes 的 from 里写着 opacity:0，元素默认就不可见。
+ *   一旦动画没跑到（JS 报错、后台标签页、打印、截图），整页永久空白且无报错。
+ *   backwards 则相反：基础态即可见，只在动画延迟期间取起始帧。
+ *   失败模式因此从"整页空白"降级为"没有动效"。
+ */
+.page-enter {
+  animation: pageEnter 0.5s cubic-bezier(0.4, 0, 0.2, 1) backwards;
+}
+
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+    filter: blur(4px);          /* 从模糊到清晰，增强动画层次 */
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+/* ============================================================
+   第五部分：导航栏
+   ============================================================ */
+
+/*
+ * 导航栏 — 纯色固定条
+ * 原实现用"渐变 + 20px 毛玻璃 + 大投影"，属于装饰性处理。
+ * 现改为接近不透明的纯色背景，成本更低、层次更清晰。
+ */
+.navbar-dark {
+  background: var(--bg-overlay) !important;
+  border-bottom: 1px solid var(--border-subtle);
+  z-index: 100;
+}
+
+/* Logo — 纯色文字（取消渐变文字，保证可读性与印刷友好性） */
+.navbar-dark .navbar-brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: .3px;
+  color: var(--text-primary) !important;
+}
+
+/* 导航链接 — 默认灰色，悬停变亮并出现半透明背景 */
+.navbar-dark .nav-link {
+  color: var(--text-secondary) !important;
+  position: relative;
+  transition: var(--transition-fast);
+  font-size: 0.9rem;
+  padding: 0.5rem 1rem !important;
+  border-radius: var(--radius-sm);
+  margin: 0 2px;
+}
+
+.navbar-dark .nav-link:hover {
+  color: var(--text-primary) !important;
+  background: rgb(var(--accent-blue-rgb) / .10);
+}
+
+/* 当前激活的导航项 — 青色高亮 + 底部指示条 */
+.navbar-dark .nav-link.active {
+  color: var(--accent-blue-dim) !important;
+  background: rgb(var(--accent-blue-rgb) / .10);
+  box-shadow: inset 0 -2px 0 var(--accent-blue-dim);
+}
+
+/* ============================================================
+   第六部分：卡片组件
+   ============================================================ */
+
+/*
+ * 基础卡片 — 暗色背景 + 细边框（静态容器）
+ *
+ * 设计取向（本版调整）：移除原先"顶部渐变发光线 + 悬停辉光 + 上浮 2px"的效果。
+ * 运维面板是长时间盯屏的工具，卡片在鼠标经过时移动或发光只会分散注意力。
+ * 现在卡片是完全静态的，仅保留一个克制的边框颜色变化作为可交互提示。
+ */
+.card-dark {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  position: relative;
+  overflow: hidden;
+  transition: border-color .18s ease;
+}
+
+/* 已移除顶部发光线与悬停抬升；保留空规则便于回溯 */
+.card-dark:hover { border-color: var(--border-glow); }
+
+.card-header-dark {
+  background: transparent;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 14px 18px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  letter-spacing: 0.5px;
+}
+
+.card-body-dark {
+  padding: 18px;
+}
+
+/* ============================================================
+   第七部分：统计数值卡片
+   ============================================================ */
+
+/*
+ * 统计卡片 — 数值 + 标签 + 趋势指示
+ * 左边框颜色区分不同类型（危险/警告/成功/信息/紫色）
+ * 数值使用渐变色 + 等宽字体，增强数据感
+ */
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color .18s ease;
+  cursor: pointer;
+}
+
+/* 悬停仅改边框色，不做位移与辉光 */
+.stat-card:hover { border-color: var(--border-glow); }
+
+.stat-card .stat-icon {
+  font-size: 2rem;
+  margin-bottom: 8px;
+  display: block;
+}
+
+/* 数值 — 等宽字体 + 纯色。
+   渐变色文字已移除：它降低对比度、影响可读性，且属于纯装饰。 */
+.stat-card .stat-value {
+  font-size: 1.9rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  line-height: 1.15;
+}
+
+.stat-card .stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: .6px;
+  margin-top: 6px;
+}
+
+/* 趋势指示 — 红色上涨，绿色下降（中国股市惯例） */
+.stat-card .stat-change { font-size: 0.75rem; margin-top: 2px; }
+.stat-card .stat-change.up { color: var(--accent-red); }
+.stat-card .stat-change.down { color: var(--accent-green); }
+
+/* 左边框颜色变体 — 通过 3px 左边框快速区分卡片类型 */
+/* 统一卡片边框 —— 取消原先"每张卡片一条彩色左边条"的做法。
+   真实运维面板里卡片本身不需要颜色，颜色只用来表达数据状态。 */
+.stat-card.info,
+.stat-card.danger,
+.stat-card.warning,
+.stat-card.success,
+.stat-card.purple { border-left: 1px solid var(--border-subtle); }
+
+/* ============================================================
+   第八部分：按钮组件
+   ============================================================ */
+
+/* 基础暗色按钮 */
+.btn-dark {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  transition: all var(--transition-fast);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+}
+
+.btn-dark:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent-blue);
+}
+
+/* 主操作按钮 — 纯色背景，取消渐变与投影（工具型界面不需要发光按钮） */
+.btn-glow {
+  background: var(--accent-blue-btn);
+  border: 1px solid var(--accent-blue-btn);
+  color: #fff;
+  transition: background .18s ease, filter .18s ease;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* 悬停仅轻微提亮，不做辉光与位移 */
+.btn-glow:hover { filter: brightness(1.12); }
+
+/* 主按钮的语义变体 — 纯色，不再使用渐变与辉光 */
+.btn-glow.danger  { background: #b91c1c; }
+.btn-glow.success { background: #047857; }
+
+/* ============================================================
+   第九部分：表单组件
+   ============================================================ */
+
+.form-control-dark, .form-select-dark {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  transition: all var(--transition-fast);
+}
+
+/* 聚焦状态 — 蓝色边框 + 细描边（取消原辉光，避免整屏闪光点） */
+.form-control-dark:focus, .form-select-dark:focus {
+  background: var(--bg-input);
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px rgb(var(--accent-blue-rgb) / .18);
+  color: var(--text-primary);
+}
+
+.form-control-dark::placeholder {
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   第十部分：表格组件
+   ============================================================ */
+
+.table-dark {
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+/* 表头 — 提高信息密度：收紧行高与字距，贴近真实运维表格 */
+.table-dark thead th {
+  background: rgb(var(--accent-blue-rgb) / .18);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: .4px;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.table-dark tbody td {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 7px 10px;
+  vertical-align: middle;
+}
+
+/* 行悬停 — 微蓝色高亮 */
+.table-dark tbody tr {
+  transition: all var(--transition-fast);
+}
+.table-dark tbody tr:hover {
+  background: rgb(var(--accent-blue-rgb) / .05);
+}
+
+/* ============================================================
+   第十一部分：徽章（Badge）组件
+   ============================================================ */
+
+/* 风险等级徽章 — 半透明背景 + 对应色文字 + 细色边框
+   高危徽章的文字用 --danger-text（对比度 5.12:1）而非 --accent-red（4.49:1），
+   因为徽章内是 0.7rem 左右的小字，处在 AA 门槛之下会明显发暗。 */
+.badge-risk-high {
+  background: rgba(242, 107, 107, 0.14);
+  color: var(--danger-text);
+  border: 1px solid rgba(242, 107, 107, 0.30);
+}
+.badge-risk-medium {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--accent-orange);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.badge-risk-low {
+  background: rgb(var(--accent-green-rgb) / .15);
+  color: var(--accent-green);
+  border: 1px solid rgb(var(--accent-green-rgb) / .30);
+}
+
+/* 状态徽章 — 活跃攻击有脉冲动画，已缓解为绿色 */
+
+@keyframes pulse-badge {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* ============================================================
+   第十二部分：进度条和状态指示器
+   ============================================================ */
+
+/* 进度条 */
+
+/* 进度条尾部光泽扫过效果 */
+
+@keyframes progressShine {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+/* ============================================================
+   第十三部分：数据刷新动画
+   ============================================================ */
+
+/* 数据刷新闪烁 — 短暂蓝色背景后消散 */
+.data-flash {
+  animation: dataFlash 0.6s ease-out;
+}
+@keyframes dataFlash {
+  0% { background: rgb(var(--accent-blue-rgb) / .15); }
+  100% { background: transparent; }
+}
+
+/* 数据脉冲 — 微缩放效果 */
+
+/* ============================================================
+   第十四部分：其他组件
+   ============================================================ */
+
+/* Toast 通知 — 用于攻击告警弹窗 */
+
+/* 自定义滚动条 — 暗色细条，hover 时加粗 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--border-glow); }
+
+/* Modal 弹窗 — 暗色背景适配 */
+.modal-dark .modal-content {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.modal-dark .modal-header { border-bottom: 1px solid var(--border-subtle); }
+.modal-dark .modal-footer { border-top: 1px solid var(--border-subtle); }
+.modal-dark .btn-close { filter: invert(1); }  /* 白色关闭按钮 */
+
+/* ============================================================
+   第十五部分：淡入动画系统
+   ============================================================ */
+
+/* 基础淡入 + 上移
+   用 backwards 而非 forwards：基础态保持可见，动画只做增强。
+   （详见文件上方 .page-enter 处的说明 —— 基础态透明会导致动画一失败就整页空白） */
+.fade-in {
+  animation: fadeIn 0.5s ease backwards;
+}
+/* 延迟错落入场：
+   这里**不再写 opacity: 0** —— 起始透明交给 animation-fill-mode: backwards，
+   基础态始终可见。 */
+.fade-in-delay-1 { animation-delay: 0.1s; }
+.fade-in-delay-2 { animation-delay: 0.2s; }
+.fade-in-delay-3 { animation-delay: 0.3s; }
+.fade-in-delay-4 { animation-delay: 0.4s; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 左右滑入 */
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* 攻击链专用动画 */
+
+/* ============================================================
+   第十六部分：工具类和响应式
+   ============================================================ */
+
+/* 文字颜色快捷类 */
+.text-cyan { color: var(--accent-blue-dim) !important; }
+
+.text-red { color: var(--danger-text) !important; }   /* 文字专用红，对比度 5.12:1 */
+.text-green { color: var(--accent-green) !important; }
+.text-orange { color: var(--accent-orange) !important; }
+
+.text-mono { font-family: var(--font-mono); }
+.bg-card { background: var(--bg-card); }
+.border-subtle { border-color: var(--border-subtle) !important; }
+
+/* 移动端适配 — 缩小字体和数值以适配小屏幕 */
+@media (max-width: 768px) {
+  html { font-size: 13px; }
+  .stat-card .stat-value { font-size: 1.5rem; }
+}
+
+/* ============================================================
+   第十七部分：仪表盘栅格布局系统（全局）
+   ------------------------------------------------------------
+   该栅格体系原先只定义在 index.html 的内联 <style> 中，而
+   heatmap.html 与 attack_chain.html 同样使用 .dashboard-grid /
+   .col-span-* 类名，取不到定义导致这两页无栅格布局、卡片整宽
+   纵向堆叠。现统一上提到全局样式表，供全部页面复用。
+   PATCH-GRID-SYSTEM
+   ============================================================ */
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  padding: 20px;
+}
+.dashboard-grid .col-span-2 { grid-column: span 2; }
+.dashboard-grid .col-span-3 { grid-column: span 3; }
+.dashboard-grid .col-span-4 { grid-column: span 4; }
+
+@media (max-width: 1200px) {
+  .dashboard-grid { grid-template-columns: repeat(2, 1fr); }
+  .dashboard-grid .col-span-3 { grid-column: span 2; }
+}
+
+@media (max-width: 768px) {
+  .dashboard-grid { grid-template-columns: 1fr; padding: 12px; }
+  .dashboard-grid .col-span-2,
+  .dashboard-grid .col-span-3,
+  .dashboard-grid .col-span-4 { grid-column: span 1; }
+}
+
+/* ============================================================
+   第十八部分：轻量 toast 通知（替代原生 alert）
+   ------------------------------------------------------------
+   原生 alert()/confirm() 会弹出系统级白底对话框，直接破坏暗色
+   科技风演示的沉浸感。这里提供与主题一致的轻量通知组件。
+   PATCH-TOAST
+   ============================================================ */
+
+.cg-toast-wrap {
+  position: fixed; top: 74px; right: 20px; z-index: 10000;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.cg-toast {
+  min-width: 240px; max-width: 380px;
+  padding: 11px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-glow);
+  border-left: 3px solid var(--accent-blue);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+  animation: toastSlideIn 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.cg-toast.ok   { border-left-color: var(--accent-green); }
+.cg-toast.warn { border-left-color: var(--accent-orange); }
+.cg-toast.err  { border-left-color: var(--accent-red); }
+
+/* ============================================================
+   第十九部分：身份标识与用户菜单
+   ------------------------------------------------------------
+   导航栏右上角展示当前登录用户与角色，替代原先写死的
+   "系统运行中" 纯文本。下拉菜单提供身份说明与退出登录。
+   PATCH-USERCHIP
+   ============================================================ */
+
+.user-chip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 12px 5px 5px;
+  background: var(--bg-overlay-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 40px;
+  cursor: pointer;
+  transition: border-color .24s, box-shadow .24s, transform .2s, background .24s;
+}
+.user-chip:hover {
+  border-color: var(--border-glow);
+  background: var(--bg-dropdown);
+}
+.user-chip::after { margin-left: 2px; opacity: .6; }
+
+/* 首字母头像 — 带渐变描边与呼吸光晕 */
+.user-avatar {
+  width: 30px; height: 30px; flex: 0 0 30px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  font-size: .82rem; font-weight: 700; color: #eef3f9;
+  background: var(--accent-blue-btn);
+  animation: avatarGlow var(--pulse) ease-in-out infinite;
+}
+@keyframes avatarGlow {
+  0%, 100% { box-shadow: 0 0 0 2px rgb(var(--accent-blue-rgb) / .22), 0 0 12px rgb(var(--accent-blue-rgb) / .28); }
+  50%      { box-shadow: 0 0 0 2px rgb(var(--accent-blue-rgb) / .34), 0 0 22px rgb(var(--accent-blue-rgb) / .50); }
+}
+.user-meta { display: flex; flex-direction: column; line-height: 1.16; text-align: left; }
+.user-name { font-size: .8rem; font-weight: 600; color: var(--text-primary); }
+.user-role { font-size: .64rem; letter-spacing: .5px; color: var(--accent-blue-dim); }
+.user-chip.is-admin .user-avatar {
+  background: #9a3412;
+  animation: none;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, .24), 0 0 16px rgba(239, 68, 68, .38);
+}
+.user-chip.is-admin .user-role { color: var(--accent-orange); }
+
+.dropdown-dark {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, .6);
+  backdrop-filter: blur(12px);
+  min-width: 190px; padding: 6px;
+  animation: ddIn .18s ease;
+}
+@keyframes ddIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.dropdown-dark .dropdown-item {
+  color: var(--text-secondary); border-radius: 7px;
+  font-size: .84rem; padding: 8px 12px;
+  transition: background .18s, color .18s;
+}
+.dropdown-dark .dropdown-item:hover { background: rgb(var(--accent-blue-rgb) / .12); color: var(--text-primary); }
+.dropdown-dark .dropdown-item-text { color: var(--text-muted); font-size: .74rem; padding: 6px 12px; }
+.dropdown-dark .dropdown-divider { border-color: var(--border-subtle); }
+
+/* ============================================================
+   第二十部分：角色徽章与用户管理表格控件
+   PATCH-ROLEUI
+   ============================================================ */
+
+.role-pill {
+  display: inline-block; padding: 2px 9px; border-radius: 20px;
+  font-size: .68rem; font-weight: 600; letter-spacing: .4px; margin-right: 6px;
+}
+.role-pill.admin  { background: rgba(239,68,68,.14);  color: #fca5a5; border: 1px solid rgba(239,68,68,.34); }
+.role-pill.viewer { background: rgb(var(--accent-blue-rgb) / .14); color: rgb(var(--accent-blue-rgb)); border: 1px solid rgb(var(--accent-blue-rgb) / .34); }
+
+.self-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 20px;
+  font-size: .62rem; color: var(--accent-blue-dim);
+  background: rgb(var(--accent-blue-rgb) / .12); border: 1px solid rgb(var(--accent-blue-rgb) / .30);
+}
+
+.form-select-sm.form-select-dark { padding: 4px 26px 4px 9px; font-size: .76rem; margin-top: 5px; }
+
+.status-toggle {
+  padding: 5px 12px; border-radius: 20px; font-size: .74rem; font-weight: 600;
+  border: 1px solid; cursor: pointer;
+  transition: transform .2s, box-shadow .24s, background .24s;
+}
+.status-toggle.on  { color: #6ee7b7; background: rgb(var(--accent-green-rgb) / .12); border-color: rgb(var(--accent-green-rgb) / .4); }
+.status-toggle.off { color: #fca5a5; background: rgba(239,68,68,.12);  border-color: rgba(239,68,68,.4); }
+.status-toggle:hover:not(:disabled) { filter: brightness(1.15); }
+.status-toggle:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-mini {
+  padding: 4px 10px; border-radius: 7px; font-size: .73rem;
+  color: var(--text-secondary);
+  background: rgb(var(--accent-blue-rgb) / .10);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background .2s, color .2s, transform .2s, border-color .2s;
+}
+.btn-mini:hover:not(:disabled) {
+  color: var(--text-primary); background: rgb(var(--accent-blue-rgb) / .20);
+  border-color: var(--border-glow);
+}
+.btn-mini.danger { color: #fca5a5; background: rgba(239,68,68,.10); }
+.btn-mini.danger:hover:not(:disabled) { background: rgba(239,68,68,.20); border-color: rgba(239,68,68,.45); }
+.btn-mini:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ============================================================
+   第二十一部分：主题化确认弹窗（替代原生 confirm）
+   PATCH-CONFIRM
+   ============================================================ */
+
+.cg-confirm-mask {
+  position: fixed; inset: 0; z-index: 10050;
+  display: grid; place-items: center;
+  background: rgba(4, 8, 16, .72);
+  backdrop-filter: blur(4px);
+  animation: maskIn .2s ease;
+}
+@keyframes maskIn { from { opacity: 0; } to { opacity: 1; } }
+.cg-confirm-box {
+  width: 100%; max-width: 400px;
+  padding: 28px 26px 22px;
+  border-radius: 16px; text-align: center;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 24px 70px rgba(0,0,0,.7);
+  animation: confirmIn .26s cubic-bezier(.4,0,.2,1);
+}
+@keyframes confirmIn {
+  from { opacity: 0; transform: translateY(16px) scale(.96); }
+  to   { opacity: 1; transform: none; }
+}
+.cg-confirm-ico { font-size: 2rem; margin-bottom: 8px; }
+.cg-confirm-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }
+.cg-confirm-msg {
+  font-size: .85rem; color: var(--text-secondary); line-height: 1.8;
+  margin-bottom: 22px; word-break: break-word;
+}
+.cg-confirm-actions { display: flex; gap: 10px; justify-content: center; }
+.cg-btn-ghost, .cg-btn-solid {
+  padding: 9px 22px; border-radius: 9px; font-size: .84rem; cursor: pointer;
+  transition: transform .2s, filter .24s, box-shadow .24s, border-color .2s;
+}
+.cg-btn-ghost { color: var(--text-secondary); background: transparent; border: 1px solid var(--border-subtle); }
+.cg-btn-ghost:hover { color: var(--text-primary); border-color: var(--border-glow); }
+.cg-btn-solid {
+  color: #fff; border: none;
+  background: var(--accent-blue-btn);
+  box-shadow: 0 6px 18px rgb(var(--accent-blue-rgb) / .30);
+}
+.cg-btn-solid.danger { background: #b91c1c; }
+.cg-btn-solid:hover { filter: brightness(1.1); }
+
+/* 只读角色的统一提示条 */
+.readonly-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; margin-bottom: 16px;
+  border-radius: 10px;
+  font-size: .8rem; color: rgb(var(--accent-blue-rgb));
+  background: rgb(var(--accent-blue-rgb) / .08);
+  border: 1px solid rgb(var(--accent-blue-rgb) / .26);
+  border-left: 3px solid var(--accent-blue);
+}
+.readonly-banner .rb-ico { font-size: 1rem; }
+
+/* 只读角色下隐藏所有需要管理员权限的元素（前端体验层，服务端仍强制校验） */
+body.role-viewer .needs-admin { display: none !important; }
+
+/* ============================================================
+   第二十二部分：数据来源标注（数据透明度）
+   ------------------------------------------------------------
+   设计原则：界面上必须能让使用者分辨"哪些是真实数据、哪些是沙箱模拟"。
+   带 src-sim 标记的均为内存沙箱生成，不来自真实网络。
+   PATCH-PROVENANCE
+   ============================================================ */
+
+/* 来源徽章 —— 克制的灰阶描边，不使用高饱和色，避免与状态色混淆 */
+.src-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 7px; margin-left: 7px;
+  font-size: .62rem; font-weight: 500; letter-spacing: .3px;
+  border-radius: 3px; white-space: nowrap; vertical-align: middle;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: help;
+}
+.src-badge.sim {
+  border-style: dashed;                 /* 虚线 = 非实测 */
+  border-color: #3a4657;
+  color: #8b98a9;
+}
+.src-badge.real { border-color: rgb(var(--accent-green-rgb) / .38); color: #6ee7b7; }
+.src-badge.mock { border-style: dashed; border-color: rgba(245,158,11,.4); color: #fbbf24; }
+
+/* 卡片标题里的来源标记 */
+.card-header-dark .src-badge { font-weight: 400; }
+
+/* 数据来源图例 —— 首页顶部一行紧凑说明（全页仅此一处）
+   对齐说明：栅格为 `padding: 20px` + `gap: 16px`，因此卡片内容区的
+   左边缘是从视口起 20px。图例用左右 20px 外边距与之对齐，
+   下边距取 6px —— 因为栅格自带 20px 上内边距，合计 26px，
+   与栅格内部的 16px 行间距形成「图例→卡片」略大、
+   「卡片→卡片」略小的合理层次。 */
+.data-legend {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px;
+  padding: 9px 16px; margin: 0 20px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-overlay-soft);
+  font-size: .74rem; color: var(--text-secondary);
+}
+.data-legend .dl-title {
+  color: var(--text-muted); font-size: .7rem; letter-spacing: .5px;
+  padding-right: 4px; border-right: 1px solid var(--border-subtle);
+}
+.data-legend .dl-item { display: inline-flex; align-items: center; gap: 5px; }
+.data-legend .dl-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px;
+}
+.data-legend .dl-dot.real { background: var(--accent-green); }
+.data-legend .dl-dot.sim  { background: #8b98a9; }
+.data-legend .dl-dot.mock { background: var(--accent-orange); }
+.data-legend .dl-link { margin-left: auto; color: var(--text-muted); text-decoration: none; font-size: .7rem; }
+.data-legend .dl-link:hover { color: var(--accent-blue); }
+
+/* 健康度等模拟指标的浅色提示 */
+.mock-note {
+  font-size: .68rem; color: var(--text-muted);
+  padding: 6px 0 0; line-height: 1.6;
+  border-top: 1px dashed var(--border-subtle); margin-top: 10px;
+}
+
+/* ============================================================
+   第二十三部分：告警处置概览
+   ------------------------------------------------------------
+   替代原先"按模拟负载派生的 5 条系统健康度进度条"。
+   数据来源为 SQLite alerts 表的真实统计，属于真实数据。
+   PATCH-ALERTSTAT
+   ============================================================ */
+
+.alert-stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  text-align: center;
+}
+.alert-stat {
+  padding: 10px 6px;
+  border-radius: 5px;
+  background: rgb(var(--accent-blue-rgb) / .05);
+  border: 1px solid var(--border-subtle);
+}
+.alert-stat .as-value {
+  font-family: var(--font-mono);
+  font-size: 1.42rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+.alert-stat .as-label {
+  font-size: .68rem;
+  color: var(--text-muted);
+  letter-spacing: .4px;
+  margin-top: 3px;
+}
+
+@media (max-width: 768px) {
+  .alert-stat-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ============================================================
+   第二十四部分：攻击浪潮阶段徽章
+   ------------------------------------------------------------
+   浪潮结构下平静期会持续 1.5~3 分钟，画面上几乎没有攻击。
+   必须让"当前处于哪个阶段"始终可见，否则使用者会以为系统坏了。
+   颜色语义：平静=中性灰、攀升=黄、突袭=红(带脉冲)、消退=蓝。
+   PATCH-WAVEBADGE
+   ============================================================ */
+
+.wave-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; margin-left: 14px;
+  border-radius: 4px;
+  font-size: .72rem; letter-spacing: .3px;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  background: transparent;
+  white-space: nowrap;
+  cursor: help;
+  transition: border-color .3s ease, color .3s ease;
+}
+.wave-badge .wb-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px;
+  background: var(--text-muted);
+  transition: background .3s ease;
+}
+
+/* 平静期 —— 中性，不吸引注意力 */
+.wave-badge.phase-calm  { border-color: var(--border-subtle); color: var(--text-muted); }
+.wave-badge.phase-calm .wb-dot { background: #6b7280; }
+
+/* 攀升期 —— 黄色提示 */
+.wave-badge.phase-rise  { border-color: rgba(245,158,11,.45); color: #fbbf24; }
+.wave-badge.phase-rise .wb-dot { background: var(--accent-orange); }
+
+/* 突袭期 —— 红色 + 脉冲，唯一需要"动"的状态 */
+.wave-badge.phase-surge { border-color: rgba(239,68,68,.55); color: #fca5a5; }
+.wave-badge.phase-surge .wb-dot {
+  background: var(--accent-red);
+  animation: wavePulse 1.1s ease-in-out infinite;
+}
+@keyframes wavePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.55); }
+  50%      { box-shadow: 0 0 0 5px rgba(239,68,68,0); }
+}
+
+/* 消退期 —— 蓝色收尾 */
+.wave-badge.phase-decay { border-color: rgb(var(--accent-blue-rgb) / .42); color: rgb(var(--accent-blue-rgb)); }
+.wave-badge.phase-decay .wb-dot { background: var(--accent-blue); }
+
+/* 实时连接中断 —— 信息流停止时必须明显可见
+   ------------------------------------------------------------
+   为什么需要这个状态：态势大屏的数据靠 WebSocket 推送。
+   一旦连接断开，画面会**静止在最后一帧** —— 但静止的画面与
+   「平静期没有攻击」在视觉上完全一样。使用者无法区分
+   "系统正常、暂时没有攻击" 和 "数据通道已断、你看到的是旧数据"。
+   这在安全运营中是危险的：值班人会误以为一切正常。
+   因此断开时必须有明确且不易忽略的提示。 */
+.wave-badge.conn-lost {
+  border-color: rgb(var(--danger-text-rgb) / .55);
+  color: var(--danger-text);
+  background: rgb(var(--danger-text-rgb) / .08);
+}
+.wave-badge.conn-lost .wb-dot {
+  background: var(--danger-text);
+  animation: connLostBlink 1s steps(2, start) infinite;
+}
+@keyframes connLostBlink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .15; }
+}
+/* 断线时页面顶部出现一条细红条，跨整屏宽度，难以忽略 */
+body.conn-lost::before {
+  content: '';
+  position: fixed; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--danger-text);
+  z-index: 2000;
+  animation: connLostBlink 1.4s ease-in-out infinite;
+}
+
+@media (max-width: 992px) {
+  .wave-badge { display: none; }   /* 窄屏优先保证导航可用 */
+}
+
+/* ============================================================
+   第二十五部分：主机资源指标格（真实采集）
+   ------------------------------------------------------------
+   与沙箱态势数据在视觉上区分为"紧凑的仪表盘读数"，
+   参考真实运维面板：等宽数字、小号灰标签、不用彩色装饰。
+   PATCH-HOSTMETRICS
+   ============================================================ */
+
+.host-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+}
+.host-metric {
+  padding: 10px 12px;
+  border-radius: 5px;
+  background: rgb(var(--accent-blue-rgb) / .05);
+  border: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+.host-metric .hm-label {
+  font-size: .68rem;
+  color: var(--text-muted);
+  letter-spacing: .3px;
+  margin-bottom: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.host-metric .hm-value {
+  font-family: var(--font-mono);
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.host-metric .hm-unit {
+  font-size: .68rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 3px;
+}
+.host-metric .hm-detail {
+  font-size: .66rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1400px) { .host-metrics { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 768px)  { .host-metrics { grid-template-columns: repeat(2, 1fr); } }

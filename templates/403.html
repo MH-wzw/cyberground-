@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>403 权限不足 | CyberGuard</title>
+    <link href="/static/vendor/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/dark-theme.css">
+    <link rel="stylesheet" href="/static/design-system.css?v=41">
+    {# JS 侧统一色表：ECharts / Canvas 读不到 CSS 变量，必须由它供色 #}
+    <script src="/static/js/cg-theme.js?v=3"></script>
+    <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+    .err-box {
+      position: relative; z-index: 2; text-align: center;
+      max-width: 560px; padding: 52px 40px;
+      border-radius: 20px;
+      background: rgba(22, 26, 32, .92);
+      border: 1px solid #232B34;
+      /* Corporate Trust：彩色阴影替代黑影（原 rgba(0,0,0,.6) 在白底上会糊成一团） */
+      box-shadow: 0 24px 60px -12px rgba(52,211,153,.22), 0 4px 20px -2px rgba(52,211,153,.10);
+      backdrop-filter: blur(14px);
+      animation: boxIn .5s cubic-bezier(.4,0,.2,1) forwards;
+    }
+    @keyframes boxIn { from { opacity: 0; transform: translateY(22px) scale(.98); } to { opacity: 1; transform: none; } }
+    .err-code {
+      font-family: var(--font-mono); font-size: 5rem; font-weight: 800; line-height: 1;
+      background: linear-gradient(92deg, var(--accent-orange), var(--accent-red));
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+      animation: codePulse 2.6s ease-in-out infinite;
+    }
+    @keyframes codePulse { 0%,100% { opacity: 1; } 50% { opacity: .68; } }
+    .err-title { font-size: 1.45rem; font-weight: 700; margin: 14px 0 10px; }
+    .err-desc { color: var(--text-secondary); font-size: .9rem; line-height: 1.9; margin-bottom: 26px; }
+    .err-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn-ghost, .btn-solid {
+      padding: 10px 22px; border-radius: 10px; font-size: .88rem;
+      text-decoration: none; transition: transform .2s, box-shadow .24s, background .24s;
+    }
+    /* 注意：403 页的按钮是 <a> 标签，而 design-system.css 有一条全局规则
+       body.theme-dash a { color: var(--accent-1) }（特异性 0,1,2）
+       会盖掉 .btn-solid 的 color（0,1,0）。因此这里必须把选择器也写成
+       body.theme-dash .btn-solid，否则按钮文字会变成 Indigo 融进渐变底。 */
+    body.theme-dash .btn-solid {
+      /* 浅色主题：Indigo 实底必须配纯白字（原 #052E22 是深空青底的旧值） */
+      color: #052E22; background: linear-gradient(96deg, #34D399, #2DD4BF);
+      box-shadow: 0 8px 22px rgba(52,211,153,.30);
+    }
+    body.theme-dash .btn-solid:hover { transform: translateY(-1px); color: #052E22; box-shadow: 0 12px 28px rgba(52,211,153,.42); }
+    body.theme-dash .btn-ghost {
+      color: var(--text-secondary); background: transparent;
+      border: 1px solid var(--border-control);
+    }
+    body.theme-dash .btn-ghost:hover { color: var(--text-primary); border-color: var(--border-glow); transform: translateY(-1px); }
+    .who {
+      margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border-subtle);
+      font-size: .76rem; color: var(--text-muted);
+    }
+    .who code { color: var(--accent-blue); background: rgba(52,211,153,.1); padding: 1px 6px; border-radius: 4px; }
+    </style>
+  </head>
+  <body class="theme-dash">
+
+    <div class="err-box">
+      <div class="err-code">403</div>
+      <div class="err-title">权限不足</div>
+      <div class="err-desc">
+        该操作仅限<strong>管理员</strong>执行。您当前的账户为
+        <code>{{ role_label or '未登录' }}</code>，只具备查看与查询权限。<br>
+        如需处置告警、管理黑名单或执行检测，请联系系统管理员提升权限。
+      </div>
+      <div class="err-actions">
+        {% if current_user %}
+          <a class="btn-solid" href="/">返回态势大屏</a>
+        {% else %}
+          <a class="btn-solid" href="/login">前往登录</a>
+        {% endif %}
+        <a class="btn-ghost" href="javascript:history.back()">返回上一页</a>
+      </div>
+      {% if current_user %}
+        <div class="who">
+          当前登录：<code>{{ current_user.username }}</code> · 角色：{{ role_label }}
+        </div>
+      {% endif %}
+    </div>
+
+  </body>
+</html>

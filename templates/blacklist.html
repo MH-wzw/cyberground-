@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% set page_title = "IP黑名单 | CyberGuard DDoS" %}
+{% set nav_active = "blacklist" %}
+
+{# 本页由 base.html 提供导航栏、身份下拉与公共脚本，此处只关注页面内容。 #}
+
+{% block content %}
+  <div class="main-content page-enter">
+    <div class="container-fluid px-4 py-3">
+
+      <!--
+      ============================================================================
+      添加黑名单卡片
+      ============================================================================
+      手动封禁入口，表单包含三个字段：
+        - IP地址（必填）：文本输入，无格式校验（后端 db_helper 中 UNIQUE 约束）
+        - 封禁原因（必填）：自由文本，用于运维记录
+        - 封禁时长（默认24h）：数字输入，范围 1-720 小时（最长30天）
+
+      提交逻辑：
+        POST /api/blacklist/add → JSON body {ip, reason, hours}
+        → 后端计算 expires_at = datetime.now() + timedelta(hours=hours)
+        → 如果 IP 已存在返回 status="exists"，否则插入并返回 status="success"
+
+      注意：
+        - UNIQUE 约束在 SQLite 层面防止重复封禁
+        - 存在性检测由后端 INSERT OR IGNORE + rowcount 判断实现
+        - 客户端未做 IP 格式正则校验，依赖后端 SQLite 的 TEXT 存储（灵活但不够严格）
+      ============================================================================
+    -->
+      <div class="card-dark mb-4 cg-rv d1">
+        <div class="card-header-dark"><span>添加IP到黑名单</span></div>
+        <div class="card-body-dark">
+          <form id="addBlacklistForm" class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label text-secondary" style="font-size:0.8rem">IP地址</label>
+              <input type="text" class="form-control-dark form-control" id="newIp" placeholder="192.168.1.100" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label text-secondary" style="font-size:0.8rem">封禁原因</label>
+              <input type="text" class="form-control-dark form-control" id="newReason" placeholder="输入封禁原因" required>
+            </div>
+            <!-- 封禁时长：默认 24 小时，控件类型 number 带 min/max 约束 -->
+            <div class="col-md-2">
+              <label class="form-label text-secondary" style="font-size:0.8rem">时长(小时)</label>
+              <input type="number" class="form-control-dark form-control" id="newHours" value="24" min="1" max="720">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+              <!-- danger 样式：红色发光按钮，强调这是敏感操作 -->
+              <button type="submit" class="btn-glow danger w-100">添加封禁</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!--
+      ============================================================================
+      黑名单列表卡片
+      ============================================================================
+      表格列：IP地址、封禁原因、封禁时间、过期时间、操作
+
+      IP地址显示：
+        使用 <code> 标签 + 红色字体 (var(--danger-text)) 突出攻击源 IP
+
+      过期检测（前端实时判断）：
+        const expired = item[4] && new Date(item[4]) < new Date()
+        如果过期时间早于当前时间 → 显示"已过期"Badge
+        注意：此处仅为视觉提示，实际的"封禁是否生效"由后端业务逻辑控制
+
+      解除封禁操作：
+        onclick 直接调用 removeFromBlacklist(id, ip)
+        → confirm 确认对话框 → POST /api/blacklist/remove/{id}
+        → 后端 DELETE FROM ip_blacklist WHERE id=?
+        → 成功后重新加载列表
+      ============================================================================
+    -->
+      <div class="card-dark cg-rv d2">
+        <div class="card-header-dark">
+          <span>黑名单列表</span>
+          <button id="refreshBtn" class="btn-glow">刷新</button>
+        </div>
+        <div class="card-body-dark">
+          <div class="table-responsive">
+            <table class="table table-dark table-hover">
+              <thead><tr><th>IP地址</th><th>封禁原因</th><th>封禁时间</th><th>过期时间</th><th>操作</th></tr></thead>
+              <tbody id="blacklistTable"><tr><td colspan="5"><div class="cg-skel"><i></i><i></i><i></i></div></td></tr></tbody>
+            </table>
+          </div>
+          <nav><ul class="pagination justify-content-center mt-3" id="pagination"></ul></nav>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+  ============================================================================
+  JavaScript 业务逻辑
+  ============================================================================
+  全局状态变量：
+    allData       - 黑名单全量数据（用于分页切片）
+    itemsPerPage  - 每页显示条数
+    currentPage   - 当前页码
+
+  数据字段（后端 SQL 返回的元组索引）：
+    item[0] = id, item[1] = IP地址, item[2] = 封禁原因,
+    item[3] = 封禁时间, item[4] = 过期时间（NULL 表示永久封禁）
+
+  操作安全：
+    - 解封操作前弹出 confirm 确认框，防止误操作
+    - 添加封禁前检查必填字段，空值直接 return
+    - AJAX 错误回调提供用户友好的提示
+  ============================================================================
+-->
+{% endblock %}
+
+{% block scripts %}
+  <script>
+  // 当前身份是否为管理员（由服务端渲染注入）——仅用于界面降级，权限判定以服务端为准
+  window.IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+
+  let allData=[],itemsPerPage=10,currentPage=1;
+
+  /**
+   * 页面初始化 - 事件绑定
+   * 1. 添加封禁表单提交 → AJAX POST /api/blacklist/add
+   * 2. 刷新按钮 → 重新加载黑名单列表
+   */
+  $(function(){
+    loadBlacklist();
+    $('#addBlacklistForm').submit(function(e){
+      e.preventDefault();
+      const ip=$('#newIp').val().trim(),reason=$('#newReason').val().trim(),hours=parseInt($('#newHours').val())||24;
+      // 前端基础校验：必填字段非空
+      if(!ip||!reason){cgToast('请填写完整的 IP 与封禁原因', 'warn');return;}
+      $.ajax({url:'/api/blacklist/add',method:'POST',contentType:'application/json',data:JSON.stringify({ip,reason,hours}),
+        // success 回调：根据后端返回的 status 字段给出不同提示
+        success:r=>{if(r.status==='exists'){cgToast('该 IP 已在黑名单中','warn');}else{cgToast('IP 已加入黑名单','ok');}$('#addBlacklistForm')[0].reset();if(r.status==='success'){loadBlacklist();}},
+        error:()=>cgToast('添加失败，请重试','err')});
+    });
+    $('#refreshBtn').click(function(){loadBlacklist();});
+  });
+
+  /**
+   * 轻量主题化通知 — 替代原生 alert()
+   * 原生 alert() 会弹出系统级白底对话框，破坏暗色科技风演示的沉浸感。
+   */
+  function cgToast(msg, kind, ms){
+    let w = document.getElementById('cgToastWrap');
+    if(!w){
+      w = document.createElement('div');
+      w.id = 'cgToastWrap'; w.className = 'cg-toast-wrap';
+      document.body.appendChild(w);
+    }
+    const el = document.createElement('div');
+    el.className = 'cg-toast ' + (kind || '');
+    el.textContent = msg;
+    w.appendChild(el);
+    setTimeout(function(){
+      el.style.opacity = '0'; el.style.transition = 'opacity .3s';
+      setTimeout(function(){ el.remove(); }, 320);
+    }, ms || 2600);
+  }
+
+  /**
+   * 加载黑名单列表
+   * GET /api/blacklist → 返回所有黑名单记录的 JSON 数组
+   */
+  function loadBlacklist(){
+    $.get('/api/blacklist')
+      .done(function(d){allData=d;currentPage=1;renderTable();renderPagination();})
+      .fail(function(x){$('#blacklistTable').html('<tr><td colspan="5" class="text-center py-5 text-red">数据加载失败（HTTP '+x.status+'）</td></tr>');});
+  }
+
+  /**
+   * 解除对指定IP的封禁
+   *
+   * 参数：
+   *   id - 黑名单记录的主键ID
+   *   ip - 被解封的IP地址（用于确认提示）
+   *
+   * 安全设计：
+   *   1. 先弹出 confirm 确认框，显示被解封的 IP（防止点错行）
+   *   2. 用户取消 → 直接 return，无任何操作
+   *   3. 用户确认 → POST /api/blacklist/remove/{id}
+   *      → 后端执行 DELETE，返回成功 → 重新加载列表
+   *   4. 失败 → alert 提示（生产环境建议改为 Toast 通知）
+   *
+   * 注意：此函数通过 onclick 属性直接绑定，而非 jQuery 事件委托，
+   *       因此需要传入具体的 id 和 ip 作为参数。
+   */
+  function removeFromBlacklist(id,ip){
+    if(!confirm('确定要解除对 IP '+ip+' 的封禁吗？')) return;
+    $.ajax({url:'/api/blacklist/remove/'+id, method:'POST'})
+      .done(function(){cgToast('已解除对 '+ip+' 的封禁','ok');loadBlacklist();})
+      .fail(function(){cgToast('解除封禁失败','err');});
+  }
+
+  /**
+   * 渲染黑名单表格
+   *
+   * 过期检测逻辑（关键）：
+   *   const expired = item[4] && new Date(item[4]) < new Date()
+   *   1. item[4] 存在（非 NULL，即非永久封禁）
+   *   2. new Date(item[4]) < new Date()（过期时间早于当前时间）
+   *   → 满足两个条件则在行内显示"已过期" Badge
+   *
+   * 永久封禁：
+   *   当 item[4] 为 NULL 时显示"永久"，不检测过期
+   *
+   * IP 显示样式：
+   *   使用 <code> 标签 + 内联 style="color:var(--danger-text)" 突出显示。
+   *   取值来自设计令牌（Nocturne 体系的 --danger-text），而非硬编码色值 ——
+   *   这样换主题时黑色名单里的 IP 会与其他页面一起跟随变深变浅。
+   */
+  function renderTable(){
+    const start=(currentPage-1)*itemsPerPage,end=start+itemsPerPage,pageData=allData.slice(start,end);
+    let h='';
+    if(!pageData.length){h='<tr><td colspan="5"><div class="cg-empty">暂无黑名单记录</div></td></tr>';}
+    else{pageData.forEach(item=>{
+      // 前端实时判断封禁是否已过期（仅作视觉提示，不影响后端业务逻辑）
+      const expired=item[4]&&new Date(item[4])<new Date();
+      h+=`<tr class="data-flash"><td><code style="color:var(--danger-text)">${item[1]}</code></td><td>${item[2]}</td><td>${item[3]}</td><td>${item[4]||'永久'} ${expired?'<span class="badge badge-risk-medium">已过期</span>':''}</td><td><button class="btn btn-glow success btn-sm" onclick="removeFromBlacklist(${item[0]},'${item[1]}')">解封</button></td></tr>`;
+    });}
+    $('#blacklistTable').html(h);
+  }
+
+  /**
+   * 渲染分页组件
+   * 与 logs.html / alerts.html 保持一致的实现
+   */
+  function renderPagination(){
+    const tp=Math.ceil(allData.length/itemsPerPage);
+    if(tp<=1){$('#pagination').html('');return;}
+    const item=(p,label,active,disabled)=>
+      `<li class="page-item ${active?'active':''} ${disabled?'disabled':''}">`+
+      `<a class="page-link" href="#" data-page="${p}">${label||p}</a></li>`;
+    let h=item(currentPage-1,'上一页',false,currentPage===1);
+    const nums=[];
+    if(tp<=7){for(let i=1;i<=tp;i++)nums.push(i);}
+    else{
+      nums.push(1);
+      const s=Math.max(2,currentPage-1),e=Math.min(tp-1,currentPage+1);
+      if(s>2)nums.push('...');
+      for(let i=s;i<=e;i++)nums.push(i);
+      if(e<tp-1)nums.push('...');
+      nums.push(tp);
+    }
+    nums.forEach(n=>{
+      h += (n==='...')
+        ? '<li class="page-item disabled"><span class="page-link">…</span></li>'
+        : item(n,null,n===currentPage,false);
+    });
+    h+=item(currentPage+1,'下一页',false,currentPage===tp);
+    $('#pagination').html(h);
+    $('.page-link').click(function(e){e.preventDefault();const p=parseInt($(this).data('page'));if(p&&p!==currentPage){currentPage=p;renderTable();renderPagination();}});
+  }
+  </script>
+{% endblock %}

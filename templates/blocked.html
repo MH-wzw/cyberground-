@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>访问被拦截 | CyberGuard</title>
+    <link href="/static/vendor/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/dark-theme.css">
+    <link rel="stylesheet" href="/static/design-system.css?v=41">
+    {# JS 侧统一色表：ECharts / Canvas 读不到 CSS 变量，必须由它供色 #}
+    <script src="/static/js/cg-theme.js?v=3"></script>
+    <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; overflow: hidden; }
+    /* 拦截页使用红色警戒氛围 */
+    body::before {
+      content: ''; position: fixed; inset: 0;
+      background:
+        radial-gradient(900px 520px at 50% 30%, rgba(248,113,113,.10), transparent 66%),
+        linear-gradient(180deg, #161A20 0%, #1A1012 60%, #221214 100%);
+      z-index: 0;
+    }
+    .block-box {
+      position: relative; z-index: 2; text-align: center;
+      max-width: 600px; padding: 56px 44px;
+      border-radius: 20px;
+      background: #161A20;
+      border: 1px solid rgba(248,113,113,.35);
+      box-shadow: 0 24px 60px -12px rgba(248,113,113,.22), 0 4px 20px -2px rgba(248,113,113,.10);
+      backdrop-filter: blur(14px);
+      animation: blockIn .5s cubic-bezier(.4,0,.2,1) forwards;
+    }
+    @keyframes blockIn { from { opacity: 0; transform: translateY(24px) scale(.97); } to { opacity: 1; transform: none; } }
+    /* 封禁盾牌 —— 用 clip-path 绘制。
+       原先这里是一个 emoji，它是彩色卡通字形：与「深空 + 单色强调」的体系
+       冲突，而且不同系统渲染差异很大（评委机器上可能变成方块或缺字）。
+       CSS 绘制则完全可控，颜色直接取自令牌。 */
+    .shield {
+      width: 62px; height: 74px; margin-bottom: 10px;
+      display: inline-block;
+      background: linear-gradient(165deg, rgba(248,113,113,.92), rgba(45,212,191,.45));
+      clip-path: polygon(50% 0, 100% 16%, 100% 58%, 50% 100%, 0 58%, 0 16%);
+      animation: shieldPulse var(--pulse) ease-in-out infinite;
+      filter: drop-shadow(0 0 16px rgba(248,113,113,.45));
+    }
+    @keyframes shieldPulse {
+      0%,100% { transform: scale(1);    opacity: .92; }
+      50%     { transform: scale(1.05); opacity: 1; }
+    }
+    .block-code {
+      font-family: var(--font-mono); font-size: 3.6rem; font-weight: 800; line-height: 1.1;
+      color: var(--accent-red); letter-spacing: 2px;
+    }
+    .block-title { font-size: 1.4rem; font-weight: 700; margin: 6px 0 12px; color: var(--danger-text); }
+    .block-desc { color: var(--text-secondary); font-size: .9rem; line-height: 1.95; margin-bottom: 24px; }
+    .ip-chip {
+      display: inline-block; margin: 0 4px; padding: 3px 12px;
+      font-family: var(--font-mono); font-size: .86rem; color: var(--danger-text);
+      background: var(--crit-dim); border: 1px solid #F87171;
+      border-radius: 20px;
+    }
+    .reason-list {
+      text-align: left; margin: 22px 0 4px; padding: 16px 20px;
+      border-radius: 12px; background: rgba(0,0,0,.28);
+      border: 1px solid rgba(248,113,113,.22);
+      font-size: .8rem; color: var(--text-secondary); line-height: 2;
+    }
+    .reason-list b { color: var(--text-primary); }
+    .contact { margin-top: 20px; font-size: .76rem; color: var(--text-muted); }
+    </style>
+  </head>
+  <body class="theme-dash">
+
+    <div class="block-box">
+      <div class="shield"></div>
+      <div class="block-code">403 BLOCKED</div>
+      <div class="block-title">您的访问已被安全策略拦截</div>
+      <div class="block-desc">
+        检测到您的来源地址 <span class="ip-chip">{{ ip }}</span>
+        命中本系统的 IP 黑名单，所有请求已被拒绝。
+      </div>
+
+      <div class="reason-list">
+        <b>为什么会被拦截？</b><br>
+        该地址触发了暴力破解检测规则（如 IP 高频失败、字典攻击、慢速暴力破解等），
+        系统已按风险等级自动下发封禁策略。<br>
+        <b>封禁会持续多久？</b><br>
+        按触发规则的风险等级，封禁时长从 12 小时到 30 天不等，到期自动解除。<br>
+        <b>如何申诉？</b><br>
+        请联系系统管理员，在「黑名单管理」页解除对应记录。
+      </div>
+
+      <div class="contact">
+        拦截由 CyberGuard 检测引擎自动执行 · 本页不记录额外个人信息
+      </div>
+    </div>
+
+  </body>
+</html>

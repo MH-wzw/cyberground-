@@ -1,0 +1,1305 @@
+{% extends "base.html" %}
+{% set page_title = "安全监控平台 | 态势大屏" %}
+{% set nav_active = "dashboard" %}
+
+{# 本页由 base.html 提供左侧导航、身份区与公共脚本，此处只关注看板内容。 #}
+
+{% block head_extra %}
+  <script src="/static/vendor/echarts.min.js"></script>
+  <script src="/static/vendor/socket.io.min.js"></script>
+{% endblock %}
+
+{% block page_css %}
+  <style>
+    /* ===================== 顶部栏 ===================== */
+    .cg-topbar {
+      display: flex; align-items: flex-end; gap: 16px;
+      margin-bottom: 20px;
+    }
+    .cg-topbar .tb-left { min-width: 0; }
+    .cg-topbar h1 {
+      font-size: clamp(22px, 2.2vw, 30px);
+      font-weight: 700; letter-spacing: -.02em;
+      color: var(--text-primary); line-height: 1.2;
+      margin: 0;
+    }
+    .cg-topbar .tb-sub {
+      color: var(--text-faint); font-size: 12.5px; margin-top: 6px;
+    }
+    .cg-topbar .tb-right {
+      margin-left: auto;
+      display: flex; align-items: center; gap: 10px; flex: none;
+    }
+    .tb-select {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--r-1);
+      color: var(--text-secondary);
+      font-size: 12.5px;
+      padding: 7px 30px 7px 12px;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2398A2AD' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      cursor: pointer;
+      transition: border-color .18s;
+    }
+    .tb-select:hover, .tb-select:focus { border-color: var(--border-glow); outline: none; }
+    .tb-btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--r-1);
+      color: var(--text-secondary);
+      font-size: 12.5px; font-weight: 500;
+      padding: 7px 14px;
+      cursor: pointer;
+      transition: border-color .18s, color .18s, background .18s;
+      text-decoration: none;
+    }
+    .tb-btn svg { width: 14px; height: 14px; }
+    .tb-btn:hover { border-color: var(--border-glow); color: var(--text-primary); }
+    .tb-btn.primary {
+      background-color: #34D399;
+      background-image: linear-gradient(96deg, #34D399, #2DD4BF);
+      border-color: transparent;
+      color: #052E22; font-weight: 600;
+    }
+    .tb-btn.primary:hover { box-shadow: var(--glow-cta); color: #052E22; }
+    /* 搜索：按钮 → 展开输入框 */
+    .tb-search { display: flex; align-items: center; }
+    .tb-search input {
+      width: 0; opacity: 0; padding: 7px 0;
+      border: 1px solid transparent; border-radius: var(--r-1);
+      background: var(--bg-panel); color: var(--text-primary);
+      font-size: 12.5px;
+      transition: width .3s var(--ease-glide), opacity .2s, padding .3s var(--ease-glide);
+    }
+    .tb-search.open input {
+      width: 190px; opacity: 1; padding: 7px 12px;
+      border-color: var(--border-subtle);
+      margin-right: 8px;
+    }
+    .tb-search input:focus { outline: none; border-color: var(--accent-1); }
+
+    /* ===================== 指标卡（内嵌迷你趋势图） ===================== */
+    .stat-card { position: relative; overflow: hidden; }
+    /* 主数字防换行：英雄卡 64px 在 4 等分卡里必然溢出（"1,234.5 Mbps" 约需 340px），
+       收敛到 38px + 不换行；其余卡片同理兜底。
+       （选择器对齐 design-system 的 body.theme-dash 前缀，特异性持平后靠加载顺序胜出） */
+    body.theme-dash .stat-card .stat-value { white-space: nowrap; }
+    body.theme-dash .stat-card.hero .stat-value { font-size: 38px; }
+    .stat-card .stat-head {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 8px;
+    }
+    .stat-card .stat-head .stat-ico {
+      margin-left: auto;
+      width: 26px; height: 26px; border-radius: 8px;
+      display: grid; place-items: center;
+      background: var(--brand-dim); color: var(--accent-1);
+      flex: none;
+    }
+    .stat-card .stat-head .stat-ico svg { width: 14px; height: 14px; }
+    .stat-card.danger .stat-head .stat-ico { background: var(--crit-dim); color: var(--accent-red); }
+    .stat-card.success .stat-head .stat-ico { background: var(--ok-dim); color: var(--accent-green); }
+    .stat-card.purple .stat-head .stat-ico { background: rgba(167,139,250,.13); color: var(--accent-purple); }
+    .stat-spark {
+      height: 46px;
+      margin: 10px -6px -6px;
+      /* 悬停时图表平滑放大，便于查看数据细节 */
+      transition: transform .38s var(--ease-glide);
+      transform-origin: center bottom;
+    }
+    .stat-card:hover .stat-spark { transform: scale(1.09); }
+
+    /* ===================== 中部组件 ===================== */
+    .chart-container { width: 100%; height: 320px; }
+
+    /* 防护状态多维网格 */
+    .prot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
+    .prot-cell { min-width: 0; }
+    .prot-cell .pc-label {
+      font-size: 11px; color: var(--text-faint); letter-spacing: .06em;
+      margin-bottom: 7px; display: flex; align-items: center; gap: 6px;
+    }
+    .prot-level { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+    .prot-level .lv-badge {
+      font-size: 15px; font-weight: 700;
+      padding: 5px 12px; border-radius: 8px;
+      background: var(--ok-dim); color: var(--accent-green);
+      white-space: nowrap;
+    }
+    .prot-level .lv-badge.mid { background: var(--warn-dim); color: var(--accent-orange); }
+    .prot-level .lv-badge.low { background: var(--crit-dim); color: var(--accent-red); }
+    #protGauge { width: 74px; height: 74px; flex: none; }
+    /* 拦截/放行堆叠条 */
+    .io-counts { display: flex; gap: 14px; margin-bottom: 7px; }
+    .io-counts .io { font-size: 11px; color: var(--text-faint); }
+    .io-counts .io b {
+      display: block; font-size: 15px; font-weight: 700;
+      font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    }
+    .io-counts .io.ok b { color: var(--accent-green); }
+    .io-counts .io.mid b { color: var(--accent-orange); }
+    .io-counts .io.bad b { color: var(--accent-red); }
+    .io-bar {
+      height: 8px; border-radius: 4px; overflow: hidden;
+      background: var(--surface-sunken); display: flex;
+    }
+    .io-bar i { display: block; height: 100%; width: 0;
+                transition: width .8s var(--ease-glide); }
+    .io-bar .b-ok { background: var(--accent-green); }
+    .io-bar .b-mid { background: var(--accent-orange); }
+    .io-bar .b-bad { background: var(--accent-red); }
+    /* 规则命中 */
+    .rule-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 11.5px; }
+    .rule-row .rk { color: var(--text-faint); font-family: var(--font-mono); width: 16px; }
+    .rule-row .rn { color: var(--text-secondary); flex: 1;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rule-row .rv { color: var(--accent-1); font-family: var(--font-mono); font-weight: 600; }
+    /* 节点健康度 */
+    .node-row { display: flex; align-items: center; gap: 8px; padding: 3.5px 0; font-size: 11.5px; }
+    .node-row .nn { color: var(--text-faint); width: 34px; flex: none; }
+    .node-row .nb { flex: 1; height: 5px; border-radius: 3px;
+                    background: var(--surface-sunken); overflow: hidden; }
+    .node-row .nb i { display: block; height: 100%; border-radius: 3px;
+                      background: var(--accent-1);
+                      transition: width .8s var(--ease-glide); }
+    .node-row .nv { width: 40px; text-align: right; font-family: var(--font-mono);
+                    color: var(--text-secondary); font-size: 11px; }
+
+    /* 实时攻击列表 — 滚动区域 */
+    .live-feed { max-height: 360px; overflow-y: auto; font-size: 0.8rem; }
+    .live-feed .feed-item {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      transition: background var(--transition-fast);
+      animation: slideInRight 0.4s ease forwards;
+    }
+    .live-feed .feed-item:hover { background: var(--surface-sunken); }
+    .live-feed .feed-item .feed-time {
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+    }
+    .live-feed .feed-item .feed-type { font-weight: 600; font-size: 0.8rem; }
+
+    /* ===== 攻击告警弹窗容器 ===== */
+    #alertToastContainer {
+      position: fixed; top: 20px; right: 20px; z-index: 9999;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    /* 告警卡片 — 暗红底 + 红色左边框 + 进入动画 */
+    .alert-toast {
+      background: linear-gradient(135deg, #221016, #17110f);
+      border: 1px solid rgba(248, 113, 113, .40);
+      border-left: 3px solid var(--accent-red);
+      border-radius: var(--radius-md);
+      padding: 14px 18px;
+      min-width: 360px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, .45);
+      animation: toastSlideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      position: relative;
+      overflow: hidden;
+    }
+    /* 底部倒计时进度条 — 5 秒后退消失 */
+    .alert-toast::after {
+      content: '';
+      position: absolute; bottom: 0; left: 0;
+      height: 2px;
+      background: var(--accent-red);
+      animation: toastTimer 5s linear forwards;
+    }
+    /* 高危常驻：不倒计时，用「需处置」语义替代 */
+    .alert-toast.persist::after { content: none; }
+    .alert-toast .toast-tag {
+      display: inline-block; margin-left: 8px;
+      font-size: 10px; font-weight: 600;
+      padding: 1px 7px; border-radius: 5px;
+      background: var(--crit-dim); color: var(--accent-red);
+      vertical-align: 2px;
+    }
+    @keyframes toastSlideIn {
+      from { opacity: 0; transform: translateX(100px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes toastTimer {
+      from { width: 100%; }
+      to { width: 0%; }
+    }
+    .alert-toast .toast-title { font-weight: 700; color: var(--accent-red); margin-bottom: 4px; }
+    .alert-toast .toast-body { font-size: 0.8rem; color: var(--text-secondary); }
+    .alert-toast .toast-close {
+      position: absolute; top: 8px; right: 12px;
+      cursor: pointer; color: var(--text-muted);
+      background: none; border: none; font-size: 1rem;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <!-- 攻击告警弹窗容器 — WebSocket 推送的告警在此渲染 -->
+  <div id="alertToastContainer"></div>
+
+  <div class="main-content page-enter">
+
+    <!-- ============================
+         顶部栏：欢迎文案 + 时间筛选 / 导出 / 搜索
+         ============================ -->
+    <div class="cg-topbar">
+      <div class="tb-left">
+        <h1>欢迎回来，{{ current_user.username }}</h1>
+        <div class="tb-sub">最新安全态势总览 · WebSocket 每 1.5 秒实时推送 · <span id="tbSync">--</span></div>
+      </div>
+      <div class="tb-right">
+        <select class="tb-select" id="timeRange"
+                title="时间窗口：作用于告警处置概览与规则命中统计（实时流量图不受限）">
+          <option value="1h">最近 1 小时</option>
+          <option value="24h" selected>最近 24 小时</option>
+          <option value="7d">最近 7 天</option>
+          <option value="all">全部时间</option>
+        </select>
+        <a class="tb-btn primary" href="/api/alerts/export" title="导出告警记录（Excel）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
+          导出
+        </a>
+        <div class="tb-search" id="tbSearch">
+          <input type="text" id="tbSearchInput" placeholder="筛选实时攻击列表：IP / 类型 / 状态">
+          <button class="tb-btn" id="btnSearch" title="搜索实时攻击列表">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            搜索
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 顶部醒目位：主机资源全宽横条（psutil 真实采集） ===== -->
+    <div class="bento">
+      <div class="card-dark b-4x1 host-strip cg-rv d1">
+        <div class="card-header-dark">
+          <span>主机资源<span class="src-badge real" title="全部由 psutil 读取操作系统真实计数器（CPU/内存/磁盘IO/网卡吞吐），非派生值">实时采集</span></span>
+          <span class="text-muted" id="hostStamp" style="font-size:.7rem">采集中...</span>
+        </div>
+        <div class="card-body-dark">
+          <div class="host-metrics" id="hostMetrics">
+            <div class="text-muted" style="font-size:.78rem">正在读取主机指标...</div>
+          </div>
+          <div class="mock-note">
+            本机 psutil 真实读数，可能出现"不好看"的值 —— 真实系统的本来面貌，不做修饰。
+            主机静态信息：<span id="hostPlatform">--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 第一行：4 个指标卡（内嵌迷你趋势图，悬停平滑放大） ===== -->
+    <div class="bento">
+      <!-- 当前总流量 — 主焦点，点击跳转攻击链页面 -->
+      <a href="/attack-chain" class="stat-card info hero cg-rv d1"
+      aria-label="当前总流量，查看攻击链分析">
+        <div class="stat-head">
+          <span class="stat-label">当前总流量</span>
+          <span class="stat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 6-8"/><path d="M14 6h4v4"/></svg></span>
+        </div>
+        <div class="stat-value" id="statBandwidth">0</div>
+        <div class="stat-change up" id="statBandwidthChange">↑ --</div>
+        <div class="stat-spark" id="sparkBandwidth"></div>
+      </a>
+      <!-- 活跃攻击数 -->
+      <div class="stat-card danger cg-rv d1">
+        <div class="stat-head">
+          <span class="stat-label">活跃攻击</span>
+          <span class="stat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
+        </div>
+        <div class="stat-value" id="statAttacks">0</div>
+        <div class="stat-change up" id="statAttacksChange">--</div>
+        <div class="stat-spark" id="sparkAttacks"></div>
+      </div>
+      <!-- 防护成功率 -->
+      <div class="stat-card success cg-rv d1">
+        <div class="stat-head">
+          <span class="stat-label">防护成功率</span>
+          <span class="stat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="M9 11.5l2 2 4-4.5"/></svg></span>
+        </div>
+        <div class="stat-value" id="statProtection">--</div>
+        <div class="stat-change" id="statProtectionChange">--</div>
+        <div class="stat-spark" id="sparkProtection"></div>
+      </div>
+      <!-- 主机 CPU 占用 —— 真实采集（psutil 读取操作系统计数器） -->
+      <div class="stat-card purple cg-rv d1">
+        <div class="stat-head">
+          <span class="stat-label">主机 CPU<span class="src-badge real" title="psutil.cpu_percent 读取的操作系统真实计数器，非派生值">实时采集</span></span>
+          <span class="stat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg></span>
+        </div>
+        <div class="stat-value" id="statLoad">--</div>
+        <div class="stat-change" id="statLoadChange">--</div>
+        <div class="stat-spark" id="sparkLoad"></div>
+      </div>
+    </div>
+
+    <!-- ===== 第二行：流量趋势 + 攻击类型分布 + 防护状态 =====
+         列宽与全页其它行保持一致（统一 4 等分 + span 控制宽度）。 -->
+    <div class="bento">
+      <!-- 实时流量趋势 — 多序列折线：总流量（渐变填充）+ 基线 + 攻击事件散点 -->
+      <div class="card-dark b-2x1 cg-rv d2">
+        <div class="card-header-dark">
+          <span>实时流量趋势</span>
+          <span class="text-mono text-muted" style="font-size:0.7rem" id="trafficUpdateTime">--</span>
+        </div>
+        <div class="card-body-dark"><div class="chart-container" id="trafficTrend"></div></div>
+      </div>
+      <!-- 攻击类型分布 — 横向排行条（按命中次数排序，带错峰动画） -->
+      <div class="card-dark cg-rv d2">
+        <div class="card-header-dark"><span>攻击类型分布</span></div>
+        <div class="card-body-dark"><div class="chart-container" id="attackTypeBar"></div></div>
+      </div>
+      <!-- 防护状态 — 多维：防护等级 / 拦截放行 / 规则命中 / 节点健康度 -->
+      <div class="card-dark cg-rv d2">
+        <div class="card-header-dark"><span>防护状态</span></div>
+        <div class="card-body-dark">
+          <div class="prot-grid">
+            <div class="prot-cell">
+              <div class="pc-label">防护等级</div>
+              <div class="prot-level">
+                <div id="protGauge"></div>
+                <span class="lv-badge" id="protLevel">--</span>
+              </div>
+            </div>
+            <div class="prot-cell">
+              <div class="pc-label">拦截 / 放行统计</div>
+              <div class="io-counts">
+                <div class="io ok"><b id="ioBlocked">0</b>已拦截</div>
+                <div class="io mid"><b id="ioCleaning">0</b>清洗中</div>
+                <div class="io bad"><b id="ioPassed">0</b>攻击中</div>
+              </div>
+              <div class="io-bar">
+                <i class="b-ok" id="ioBarOk"></i><i class="b-mid" id="ioBarMid"></i><i class="b-bad" id="ioBarBad"></i>
+              </div>
+            </div>
+            <div class="prot-cell">
+              <div class="pc-label">规则命中 TOP3<span class="src-badge real" title="按时间窗口统计 SQLite alerts 表中各检测规则的命中次数">真实数据</span></div>
+              <div id="ruleHits"><div class="text-muted" style="font-size:.74rem">统计中...</div></div>
+            </div>
+            <div class="prot-cell">
+              <div class="pc-label">节点健康度<span class="src-badge real" title="psutil 读取的本机真实计数器">实时采集</span></div>
+              <div id="nodeHealth"><div class="text-muted" style="font-size:.74rem">采集中...</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 第三行：实时攻击列表 + TOP 国家 + 告警处置概览 ===== -->    <div class="bento">
+      <!-- 实时攻击列表 — 滚动信息流 -->
+      <div class="card-dark cg-rv d3">
+        <div class="card-header-dark"><span>实时攻击列表</span></div>
+        <div class="card-body-dark p-0"><div class="cg-rows" id="liveAttackFeed" style="max-height:268px;overflow-y:auto;padding:6px 10px"></div></div>
+      </div>
+      <!-- TOP 攻击来源国家 — 横向柱状图 -->
+      <div class="card-dark b-2x1 cg-rv d3">
+        <div class="card-header-dark"><span>TOP 攻击来源国家/地区</span></div>
+        <div class="card-body-dark"><div class="chart-container" id="countryBar"></div></div>
+      </div>
+      <!-- 实时告警处置概览（SQLite alerts 真实数据，受时间窗口筛选） -->
+      <div class="card-dark cg-rv d3">
+        <div class="card-header-dark"><span>告警处置概览<span class="src-badge real" title="数据来自 SQLite alerts 表，由 5 条检测规则的真实判定产生">真实数据</span></span></div>
+        <div class="card-body-dark">
+          <div class="alert-stat-row">
+            <div class="alert-stat">
+              <div class="as-value text-red" id="asPending">--</div>
+              <div class="as-label">未处理</div>
+            </div>
+            <div class="alert-stat">
+              <div class="as-value text-green" id="asHandled">--</div>
+              <div class="as-label">已处理</div>
+            </div>
+            <div class="alert-stat">
+              <div class="as-value" id="asFalse">--</div>
+              <div class="as-label">误报</div>
+            </div>
+            <div class="alert-stat">
+              <div class="as-value text-orange" id="asHigh">--</div>
+              <div class="as-label">高危</div>
+            </div>
+          </div>
+          <div class="mock-note">
+            告警由 5 条检测规则的真实判定产生，处置状态可在
+            <a href="/alerts">告警管理</a> 页面更新。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 第四行：两个面向分析师的核心视图 ===== -->
+    <div class="bento">
+      <!-- 最可疑攻击源 —— 按累计攻击带宽排序 -->
+      <div class="card-dark b-2x1 cg-rv d4">
+        <div class="card-header-dark">
+          <span>最可疑攻击源</span>
+          <span class="text-muted" style="font-size:.7rem">按累计攻击带宽排序</span>
+        </div>
+        <div class="card-body-dark p-0">
+          <div class="table-responsive">
+            <table class="table table-dark table-sm mb-0">
+              <thead>
+                <tr>
+                  <th style="width:44px">#</th>
+                  <th>来源 IP</th>
+                  <th style="width:78px">归属</th>
+                  <th style="width:86px">攻击次数</th>
+                  <th style="width:120px">累计带宽</th>
+                  <th style="width:160px">攻击类型</th>
+                </tr>
+              </thead>
+              <tbody id="suspiciousTable">
+                <tr><td colspan="6"><div class="cg-empty">等待数据</div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 受影响服务 —— 按目标端口聚合 -->
+      <div class="card-dark b-2x1 cg-rv d4">
+        <div class="card-header-dark">
+          <span>受影响服务</span>
+          <span class="text-muted" style="font-size:.7rem">按目标端口聚合</span>
+        </div>
+        <div class="card-body-dark p-0">
+          <div class="table-responsive">
+            <table class="table table-dark table-sm mb-0">
+              <thead>
+                <tr>
+                  <th style="width:86px">端口</th>
+                  <th style="width:84px">协议</th>
+                  <th style="width:96px">服务</th>
+                  <th style="width:76px">命中</th>
+                  <th style="width:116px">攻击带宽</th>
+                  <th>拦截率</th>
+                </tr>
+              </thead>
+              <tbody id="targetsTable">
+                <tr><td colspan="6"><div class="cg-empty">等待数据</div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 数据来源与合规边界（折叠，默认收起）===== -->
+    <details class="cg-src-fold">
+      <summary>数据来源与合规边界</summary>
+      <div class="dl-body">
+        <span class="dl-item"><span class="dl-dot real"></span>实时采集：主机 CPU / 内存 / 磁盘 IO / 网卡吞吐（psutil 读取操作系统计数器）</span>
+        <span class="dl-item"><span class="dl-dot real"></span>真实数据：登录日志 / 告警 / 黑名单 / 权限（SQLite 实表 + 真实检测算法）</span>
+        <span class="dl-item"><span class="dl-dot sim"></span>沙箱模拟：攻击事件 / 流量 / 地理态势（内存推演，不产生真实报文）</span>
+        <span class="dl-item dl-links">
+          <a href="/docs/data-provenance">数据来源说明</a>
+          <a href="/docs/compliance">安全与合规声明 →</a>
+        </span>
+      </div>
+    </details>
+
+    </div><!-- /.main-content -->
+
+  {% endblock %}
+
+  {% block scripts %}
+    <script>
+    /**
+     * ========== WebSocket 初始化 ==========
+     */
+    const socket = io();
+
+    // 图表实例引用 — 全局复用，避免多次 init
+    let trafficTrendChart, attackTypeBarChart, countryBar, protGaugeChart;
+    const sparks = {};   // 4 张迷你趋势图：bandwidth / attacks / protection / load
+
+    // 流量数据缓冲区 — 最多保留 30 个数据点
+    let trafficData = [];
+
+    // 迷你趋势图环形缓冲（每 tick 追加，窗口 30 点）
+    const hist = { bandwidth: [], attacks: [], protection: [], load: [] };
+    function pushHist(key, v) {
+      if (!Number.isFinite(v)) return;
+      hist[key].push(v);
+      if (hist[key].length > 30) hist[key].shift();
+    }
+
+    // 实时攻击列表的搜索关键字（顶部栏搜索框驱动）
+    let feedKeyword = '';
+    let lastTimeline = [];
+
+    // ===== 连接事件 =====
+    socket.on('connect', () => cgSetConnState(true));
+    socket.on('disconnect', (reason) => cgSetConnState(false, reason));
+    socket.on('connect_error', (err) => cgSetConnState(false, err && err.message));
+
+    // 连接成功后自动请求全量状态（首次加载数据）
+    socket.on('connect', () => { socket.emit('request_full_state'); });
+
+    /**
+     * ========== 攻击告警 toast（高危常驻 / 普通 5s / 超 3 条合并） ==========
+     */
+    const ALERT_STACK_MAX = 3;
+
+    function _alertToasts() {
+      return Array.prototype.slice.call(
+        document.querySelectorAll('#alertToastContainer .alert-toast')
+      );
+    }
+
+    let _alertMergedEl = null;
+    let _alertMergedCount = 0;
+    function _bumpMerged() {
+      const container = document.getElementById('alertToastContainer');
+      _alertMergedCount++;
+      if (!_alertMergedEl) {
+        _alertMergedEl = document.createElement('div');
+        _alertMergedEl.className = 'alert-toast alert-merged';
+        _alertMergedEl.innerHTML =
+          '<button class="toast-close" title="清空合并提示">×</button>' +
+          '<div class="toast-title">告警风暴合并</div>' +
+          '<div class="toast-body" data-merged></div>';
+        _alertMergedEl.querySelector('.toast-close').addEventListener('click', function () {
+          _alertMergedCount = 0;
+          _alertMergedEl.remove();
+          _alertMergedEl = null;
+        });
+        container.appendChild(_alertMergedEl);
+      }
+      _alertMergedEl.querySelector('[data-merged]').textContent =
+        '+' + _alertMergedCount + ' 条同类告警（已折叠，完整列表见「告警管理」）';
+    }
+
+    socket.on('attack_alert', showAlertToast);
+
+    function showAlertToast(data) {
+      const container = document.getElementById('alertToastContainer');
+      if (!container || !data) return;
+
+      const isHigh = String(data.risk || '') === '高危';
+      const live = _alertToasts().filter(t => t !== _alertMergedEl);
+
+      if (live.length >= ALERT_STACK_MAX) {
+        if (!isHigh) { playAlertSound(); _bumpMerged(); return; }
+        const evict = live.find(t => !t.classList.contains('persist')) || live[0];
+        if (evict) evict.remove();
+      }
+
+      const toast = document.createElement('div');
+      toast.className = 'alert-toast' + (isHigh ? ' persist' : '');
+      toast.innerHTML =
+        '<button class="toast-close" title="关闭">×</button>' +
+        '<div class="toast-title"></div>' +
+        '<div class="toast-body"></div>';
+
+      toast.querySelector('.toast-title').textContent = data.message || '检测到攻击';
+      const body = toast.querySelector('.toast-body');
+      const idSpan = document.createElement('span');
+      idSpan.className = 'text-mono';
+      idSpan.textContent = data.id || '--';
+      body.appendChild(idSpan);
+      body.appendChild(document.createTextNode(
+        ' | ' + (data.type || '--') + ' | 风险: ' + (data.risk || '--') +
+        ' | ' + (data.timestamp || '--')
+      ));
+      if (isHigh) {
+        const tag = document.createElement('span');
+        tag.className = 'toast-tag';
+        tag.textContent = '需处置';
+        toast.querySelector('.toast-title').appendChild(tag);
+      }
+      toast.querySelector('.toast-close')
+           .addEventListener('click', function () { toast.remove(); });
+      container.appendChild(toast);
+
+      playAlertSound();
+
+      if (!isHigh) {
+        setTimeout(() => { if (toast.parentElement) toast.remove(); }, 5000);
+      }
+    }
+
+    window.__cgTestAlert = showAlertToast;
+
+    /**
+     * ========== 接收实时 DDoS 数据更新 ==========
+     */
+    socket.on('ddos_update', data => {
+      if (!data || !data.stats) return;
+      const s = data.stats;
+
+      if (data.wave) window.cgUpdateWaveBadge && window.cgUpdateWaveBadge(data.wave);
+      if (data.host) updateHostCard(data.host);
+
+      // --- 4 个统计卡片数值 + 迷你趋势 ---
+      const bw = s.total_bandwidth_mbps || 0;
+      const atk = s.last_24h_attacks || 0;
+      const rawProtection = parseFloat(s.protection_rate);
+      const prot = Number.isFinite(rawProtection) ? rawProtection : NaN;
+
+      animateValue('statBandwidth', bw, ' Mbps');
+      animateValue('statAttacks', atk, '');
+      animateValue('statProtection', Number.isFinite(prot) ? prot : '--', '%');
+
+      pushHist('bandwidth', bw);
+      pushHist('attacks', atk);
+      pushHist('protection', prot);
+      updateSpark('bandwidth');
+      updateSpark('attacks');
+      updateSpark('protection');
+
+      document.getElementById('statBandwidthChange').innerHTML = (bw > 500) ? '↑ 高负载' : '→ 正常';
+      document.getElementById('statAttacksChange').innerHTML = (atk > 3) ? `↑ ${atk}个活跃` : '→ 正常';
+      const pc = document.getElementById('statProtectionChange');
+      if (pc) pc.innerHTML = !Number.isFinite(prot) ? '--' : (prot >= 99 ? '→ 优' : (prot >= 90 ? '→ 良好' : '↓ 关注'));
+      document.getElementById('trafficUpdateTime').textContent = new Date().toLocaleTimeString();
+      document.getElementById('tbSync').textContent = '最近同步 ' + new Date().toLocaleTimeString();
+
+      // --- 防护状态多维 ---
+      updateProtection(s);
+
+      // --- 分析师视图 ---
+      renderSuspicious(stateCache.top_attackers || []);
+      renderTargets(stateCache.affected_targets || []);
+
+      // --- 流量折线图 ---
+      if (data.traffic && data.traffic.timestamp) {
+        trafficData.push({
+          time: data.traffic.timestamp,
+          traffic: data.traffic.traffic_mbps || 0,
+          isAttack: data.traffic.is_attack || false
+        });
+        if (trafficData.length > 30) trafficData.shift();
+        updateTrafficTrend();
+      }
+
+      // --- 实时攻击列表 ---
+      lastTimeline = data.timeline || lastTimeline;
+      renderLiveFeed(lastTimeline);
+    });
+
+    /**
+     * ========== 接收全量状态（首次加载 / 手动刷新） ==========
+     */
+    socket.on('full_state', state => {
+      if (!state) return;
+
+      if (state.wave) window.cgUpdateWaveBadge && window.cgUpdateWaveBadge(state.wave);
+      if (state.host) updateHostCard(state.host);
+
+      trafficData = (state.traffic_history || []).map(t => ({
+        time: t.timestamp,
+        traffic: t.traffic_mbps || 0,
+        isAttack: t.is_attack || false
+      }));
+      if (trafficData.length > 30) trafficData = trafficData.slice(-30);
+      updateTrafficTrend();
+
+      // 首屏迷你趋势用流量历史铺满带宽图
+      hist.bandwidth = trafficData.map(d => d.traffic);
+      updateSpark('bandwidth');
+
+      updateAttackTypeBar(state.attack_types_count || {});
+
+      stateCache.top_attackers = state.top_attackers || [];
+      stateCache.affected_targets = state.affected_targets || [];
+      renderSuspicious(stateCache.top_attackers);
+      renderTargets(stateCache.affected_targets);
+
+      const countryCounts = {};
+      (state.current_attacks || []).forEach(a => {
+        const c = a.source_country || '未知';
+        countryCounts[c] = (countryCounts[c] || 0) + 1;
+      });
+      updateCountryBar(countryCounts);
+    });
+
+    // ============================================================
+    //                      ECharts 图表渲染函数
+    // ============================================================
+
+    function initCharts() {
+      trafficTrendChart = echarts.init(document.getElementById('trafficTrend'));
+      attackTypeBarChart = echarts.init(document.getElementById('attackTypeBar'));
+      countryBar = echarts.init(document.getElementById('countryBar'));
+      protGaugeChart = echarts.init(document.getElementById('protGauge'));
+
+      ['Bandwidth', 'Attacks', 'Protection', 'Load'].forEach(k => {
+        const el = document.getElementById('spark' + k);
+        if (el) sparks[k.toLowerCase()] = echarts.init(el);
+      });
+
+      window.addEventListener('resize', () => {
+        trafficTrendChart?.resize();
+        attackTypeBarChart?.resize();
+        countryBar?.resize();
+        protGaugeChart?.resize();
+        Object.values(sparks).forEach(c => c.resize());
+      });
+    }
+
+    /** 迷你趋势图：无坐标轴面积线图，hover 放大由 CSS transform 承担 */
+    function updateSpark(key) {
+      const chart = sparks[key];
+      if (!chart) return;
+      const data = hist[key];
+      if (!data.length) return;
+      const C = cgTheme();
+      const colorMap = { bandwidth: C.accent, attacks: C.crit, protection: C.ok, load: C.purple };
+      const rgbMap = { bandwidth: '52,211,153', attacks: '248,113,113', protection: '52,211,153', load: '167,139,250' };
+      const col = colorMap[key] || C.accent;
+      const rgb = rgbMap[key] || '52,211,153';
+      chart.setOption({
+        animationDuration: 500,
+        animationDurationUpdate: 300,
+        grid: { left: 0, right: 0, top: 4, bottom: 0 },
+        xAxis: { type: 'category', show: false, data: data.map((_, i) => i) },
+        yAxis: { type: 'value', show: false, min: v => Math.max(0, v.min - (v.max - v.min) * 0.15) },
+        series: [{
+          type: 'line', data, smooth: true, symbol: 'none',
+          lineStyle: { width: 1.6, color: col },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(' + rgb + ',.28)' },
+              { offset: 1, color: 'rgba(' + rgb + ',0)' }
+            ])
+          }
+        }]
+      }, { replaceMerge: ['series'] });
+    }
+
+    /**
+     * 实时流量趋势 —— 多序列折线
+     *   序列 1「总流量」：翡翠绿 + 渐变面积填充 + 平滑过渡
+     *   序列 2「基线（10 点移动均值）」：青碧虚线，标出常态水位
+     *   序列 3「攻击事件」：红色散点，只在攻击发生的节拍上出现
+     */
+    function updateTrafficTrend() {
+      if (!trafficTrendChart || !trafficData.length) return;
+      const C = cgTheme();
+      const times = trafficData.map(d => (d.time || '').slice(11, 19) || d.time);
+      const totals = trafficData.map(d => Math.round(d.traffic));
+
+      // 10 点移动平均基线
+      const base = totals.map((_, i) => {
+        const seg = totals.slice(Math.max(0, i - 9), i + 1);
+        return Math.round(seg.reduce((a, b) => a + b, 0) / seg.length);
+      });
+
+      const attacks = trafficData.map(d => d.isAttack ? Math.round(d.traffic) : null);
+
+      trafficTrendChart.setOption({
+        backgroundColor: 'transparent',
+        /* 图例符号色取自 series 的 itemStyle，只设 lineStyle 会掉回 ECharts 默认蓝 */
+        color: [C.accent, '#2DD4BF', C.crit],
+        animationDuration: 600,
+        animationDurationUpdate: 300,
+        animationEasing: 'cubicOut',
+        legend: {
+          top: 0, right: 0,
+          textStyle: { color: C.faint, fontSize: 11 },
+          itemWidth: 14, itemHeight: 8,
+          icon: 'roundRect'
+        },
+        tooltip: Object.assign({
+          trigger: 'axis',
+          axisPointer: { type: 'line', lineStyle: { color: C.axis } }
+        }, window.CG_TOOLTIP || {}),
+        grid: { left: 46, right: 16, top: 30, bottom: 26 },
+        xAxis: Object.assign({
+          type: 'category', data: times, boundaryGap: false
+        }, window.CG_AXIS || {}),
+        yAxis: Object.assign({
+          type: 'value', name: 'Mbps',
+          nameTextStyle: { color: C.faint, fontSize: 10 }
+        }, window.CG_AXIS || {}),
+        series: [
+          {
+            name: '总流量', type: 'line', data: totals,
+            smooth: true, symbol: 'none',
+            lineStyle: { width: 2.2, color: C.accent },
+            areaStyle: {
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: 'rgba(52,211,153,.30)' },
+                { offset: 1, color: 'rgba(52,211,153,0)' }
+              ])
+            },
+            z: 2
+          },
+          {
+            name: '基线（10 点均值）', type: 'line', data: base,
+            smooth: true, symbol: 'none',
+            lineStyle: { width: 1.4, color: '#2DD4BF', type: 'dashed', opacity: .8 },
+            z: 1
+          },
+          {
+            name: '攻击事件', type: 'scatter', data: attacks,
+            symbolSize: 7,
+            itemStyle: { color: C.crit, borderColor: 'rgba(248,113,113,.35)', borderWidth: 4 },
+            z: 3
+          }
+        ]
+      });
+    }
+
+    /**
+     * 攻击类型分布 —— 横向排行条（替代原圆环图）
+     * 信息量更大：类型名 + 命中次数 + 相对比例一次读出；
+     * 入场按名次错峰播动画（名次越靠前越先动）。
+     */
+    function updateAttackTypeBar(typeCounts) {
+      if (!attackTypeBarChart) return;
+      const C = cgTheme();
+      const colorMap = {
+        'SYN Flood':  C.crit,
+        'UDP Flood':  C.warn,
+        'HTTP Flood': C.accent,
+        'DNS 放大':   '#A78BFA',
+        'Slowloris':  C.ok,
+        'ICMP Flood': '#F472B6'
+      };
+      const sorted = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
+      const names = sorted.map(([n]) => n);
+      const data = sorted.map(([n, v]) => ({
+        value: v,
+        itemStyle: {
+          borderRadius: [0, 4, 4, 0],
+          color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+            { offset: 0, color: hexToRgbA(colorMap[n] || C.faint, .35) },
+            { offset: 1, color: colorMap[n] || C.faint }
+          ])
+        }
+      }));
+      if (!names.length) { names.push('暂无数据'); data.push({ value: 0 }); }
+
+      attackTypeBarChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: Object.assign({ trigger: 'axis', axisPointer: { type: 'shadow' } }, window.CG_TOOLTIP || {}),
+        grid: { left: 86, right: 40, top: 8, bottom: 24 },
+        xAxis: Object.assign({ type: 'value' }, window.CG_AXIS || {}),
+        yAxis: Object.assign({
+          type: 'category', data: names, inverse: true,
+          axisLabel: { color: C.body, fontSize: 11.5 }
+        }, window.CG_AXIS || {}),
+        series: [{
+          type: 'bar', data, barWidth: 15,
+          showBackground: true,
+          backgroundStyle: { color: 'rgba(255,255,255,.04)', borderRadius: [0, 4, 4, 0] },
+          label: { show: true, position: 'right', color: C.text, fontSize: 11,
+                   fontFamily: 'ui-monospace, Consolas, monospace' },
+          animationDelay: idx => idx * 90,
+          animationDurationUpdate: 500,
+          animationEasingUpdate: 'cubicOut'
+        }],
+        animationEasing: 'cubicOut',
+        animationDuration: 600
+      });
+    }
+
+    function hexToRgbA(hex, a) {
+      const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+      if (!m) return hex;
+      const n = parseInt(m[1], 16);
+      return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')';
+    }
+
+    /** TOP 攻击来源国家横向柱状图 */
+    function updateCountryBar(countryCounts) {
+      if (!countryBar) return;
+      const C = cgTheme();
+      const sorted = Object.entries(countryCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const names = sorted.map(([n]) => n);
+      const values = sorted.map(([, v]) => v);
+      if (names.length === 0) { names.push('暂无'); values.push(0); }
+
+      countryBar.setOption({
+        backgroundColor: 'transparent',
+        tooltip: Object.assign({ trigger: 'axis', axisPointer: { type: 'shadow' } }, window.CG_TOOLTIP || {}),
+        grid: { left: 70, right: 20, top: 10, bottom: 30 },
+        xAxis: Object.assign({ type: 'value' }, window.CG_AXIS || {}),
+        yAxis: Object.assign({ type: 'category', data: names, inverse: true,
+                               axisLabel: { color: C.body } }, window.CG_AXIS || {}),
+        series: [{
+          type: 'bar', data: values,
+          itemStyle: { borderRadius: [0, 4, 4, 0],
+                       color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                         { offset: 0, color: 'rgba(52,211,153,.35)' }, { offset: 1, color: C.accent }]) },
+          barWidth: 14, label: { show: true, position: 'right', color: C.body, fontSize: 11 }
+        }]
+      });
+    }
+
+    /**
+     * 防护状态 —— 四个维度
+     *   ① 防护等级：由成功率推导的等级徽章 + 环形仪表
+     *   ② 拦截/放行统计：三态计数 + 堆叠比例条
+     *   ③ 规则命中 TOP3：见 loadAlertStats()（ alerts 表按时间窗口聚合）
+     *   ④ 节点健康度：见 updateHostCard()（psutil 真实计数器）
+     */
+    function updateProtection(s) {
+      const mitigated = s.mitigated_count || 0;
+      const cleaning = s.cleaning_count || 0;
+      const active = Math.max(0, (s.last_24h_attacks || 0) - mitigated);
+      const total = Math.max(1, mitigated + cleaning + active);
+
+      document.getElementById('ioBlocked').textContent = mitigated;
+      document.getElementById('ioCleaning').textContent = cleaning;
+      document.getElementById('ioPassed').textContent = active;
+      document.getElementById('ioBarOk').style.width = (mitigated / total * 100) + '%';
+      document.getElementById('ioBarMid').style.width = (cleaning / total * 100) + '%';
+      document.getElementById('ioBarBad').style.width = (active / total * 100) + '%';
+
+      const rate = parseFloat(s.protection_rate);
+      const badge = document.getElementById('protLevel');
+      if (Number.isFinite(rate)) {
+        let lv = 'Ⅳ 级 · 关注', cls = 'low';
+        if (rate >= 99)      { lv = 'Ⅰ 级 · 特护'; cls = ''; }
+        else if (rate >= 95) { lv = 'Ⅱ 级 · 加强'; cls = ''; }
+        else if (rate >= 85) { lv = 'Ⅲ 级 · 标准'; cls = 'mid'; }
+        badge.textContent = lv;
+        badge.className = 'lv-badge' + (cls ? ' ' + cls : '');
+      } else {
+        badge.textContent = '--';
+        badge.className = 'lv-badge';
+      }
+
+      // 环形仪表：成功率
+      if (protGaugeChart) {
+        const C = cgTheme();
+        const v = Number.isFinite(rate) ? rate : 0;
+        protGaugeChart.setOption({
+          series: [{
+            type: 'gauge',
+            startAngle: 220, endAngle: -40,
+            min: 0, max: 100,
+            radius: '96%', center: ['50%', '56%'],
+            progress: {
+              show: true, width: 7, roundCap: true,
+              itemStyle: {
+                color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                  { offset: 0, color: '#2DD4BF' }, { offset: 1, color: '#34D399' }
+                ])
+              }
+            },
+            axisLine: { lineStyle: { width: 7, color: [[1, 'rgba(255,255,255,.08)']] } },
+            axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false },
+            pointer: { show: false },
+            anchor: { show: false },
+            detail: {
+              valueAnimation: true,
+              fontSize: 15, fontWeight: 700, color: C.text,
+              offsetCenter: [0, '-6%'],
+              formatter: x => x.toFixed(1) + '%'
+            },
+            title: { show: true, offsetCenter: [0, '38%'], fontSize: 9, color: C.faint },
+            data: [{ value: v, name: '成功率' }]
+          }]
+        });
+      }
+    }
+
+    /** 渲染实时攻击事件信息流（应用顶部栏搜索关键字过滤） */
+    function renderLiveFeed(timeline) {
+      const container = document.getElementById('liveAttackFeed');
+      let items = (timeline || []).slice(-8).reverse();
+      if (feedKeyword) {
+        const kw = feedKeyword.toLowerCase();
+        items = items.filter(t =>
+          String(t.type || '').toLowerCase().includes(kw) ||
+          String(t.source || '').toLowerCase().includes(kw) ||
+          String(t.status || '').toLowerCase().includes(kw));
+      }
+      if (items.length === 0) {
+        container.innerHTML = '<div class="cg-empty">' + (feedKeyword ? '无匹配「' + feedKeyword + '」的事件' : '暂无攻击事件') + '</div>';
+        return;
+      }
+      container.innerHTML = items.map(t => `
+ <div class="feed-item">
+ <div class="d-flex justify-content-between align-items-start">
+ <span class="feed-type text-red">${t.type}</span>
+ <span class="feed-time">${t.time}</span>
+ </div>
+ <div class="text-muted" style="font-size:0.7rem">
+            来源: ${t.source} | 状态:
+ <span class="${t.status==='已拦截'||t.status==='已清洗'?'text-green':'text-red'}">${t.status}</span>
+            | ${(t.bandwidth||0).toFixed(0)} Mbps
+ </div>
+ </div>
+      `).join('');
+    }
+
+    /** 指标数字滚动补间（800ms easeOutExpo） */
+    const _tweenRaf = new Map();
+    function animateValue(id, target, suffix) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const next = target + suffix;
+      if (el.textContent === next) return;
+
+      const cut = () => {
+        if (_tweenRaf.has(id)) { cancelAnimationFrame(_tweenRaf.get(id)); _tweenRaf.delete(id); }
+      };
+
+      const to = parseFloat(target);
+      if (!Number.isFinite(to)) {
+        cut();
+        el.textContent = next;
+        el.classList.add('data-flash');
+        setTimeout(() => el.classList.remove('data-flash'), 450);
+        return;
+      }
+
+      const from = parseFloat(String(el.textContent).replace(/,/g, ''));
+      const start = Number.isFinite(from) ? from : 0;
+      const decimals = (String(target).split('.')[1] || '').length;
+      const fmt = v => decimals
+        ? v.toFixed(decimals)
+        : Math.round(v).toLocaleString('en-US');
+
+      const DUR = 800;
+      const t0 = performance.now();
+      cut();
+
+      function frame(now) {
+        let p = Math.min((now - t0) / DUR, 1);
+        p = 1 - Math.pow(2, -10 * p);
+        el.textContent = fmt(start + (to - start) * p) + suffix;
+        if (p < 1) {
+          _tweenRaf.set(id, requestAnimationFrame(frame));
+        } else {
+          el.textContent = next;
+          _tweenRaf.delete(id);
+        }
+      }
+
+      el.classList.add('data-flash');
+      setTimeout(() => el.classList.remove('data-flash'), 450);
+      _tweenRaf.set(id, requestAnimationFrame(frame));
+    }
+
+    /** 攻击告警提示音 — Web Audio API 实时合成 */
+    let _audioCtx = null;
+    function playAlertSound() {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!_audioCtx) _audioCtx = new AC();
+        if (_audioCtx.state === 'suspended') _audioCtx.resume();
+
+        [880, 1320].forEach(function (freq, i) {
+          const t0 = _audioCtx.currentTime + i * 0.13;
+          const osc = _audioCtx.createOscillator();
+          const gain = _audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, t0);
+          gain.gain.setValueAtTime(0.0001, t0);
+          gain.gain.exponentialRampToValueAtTime(0.13, t0 + 0.012);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+          osc.connect(gain).connect(_audioCtx.destination);
+          osc.start(t0);
+          osc.stop(t0 + 0.1);
+        });
+      } catch (e) { /* 音频不可用时静默降级 */ }
+    }
+
+    // 沙箱状态缓存
+    let stateCache = { top_attackers: [], affected_targets: [] };
+
+    /** 渲染「最可疑攻击源」表 */
+    function renderSuspicious(list) {
+      const tb = document.getElementById('suspiciousTable');
+      if (!tb) return;
+      if (!list.length) {
+        tb.innerHTML = '<tr><td colspan="6"><div class="cg-empty">暂无攻击源数据</div></td></tr>';
+        return;
+      }
+      tb.innerHTML = list.slice(0, 8).map((a, i) => {
+        const bwCls = a.bandwidth >= 1000 ? 'text-red' : '';
+        const types = (a.types || []).slice(0, 2).join(' / ');
+        return `<tr>
+ <td class="text-muted">${i + 1}</td>
+ <td class="text-mono">${a.ip}</td>
+ <td class="text-muted">${a.country || '--'}</td>
+ <td class="text-mono">${a.count || 0}</td>
+ <td class="text-mono ${bwCls}">${Math.round(a.bandwidth || 0)} Mbps</td>
+ <td class="text-muted" style="font-size:.74rem">${types}${(a.types || []).length > 2 ? ' …' : ''}</td>
+ </tr>`;
+      }).join('');
+    }
+
+    /** 渲染「受影响服务」表 */
+    function renderTargets(list) {
+      const tb = document.getElementById('targetsTable');
+      if (!tb) return;
+      if (!list.length) {
+        tb.innerHTML = '<tr><td colspan="6"><div class="cg-empty">暂无受影响服务</div></td></tr>';
+        return;
+      }
+      tb.innerHTML = list.slice(0, 8).map(x => {
+        const rate = x.block_rate || 0;
+        const rateCls = rate < 60 ? 'text-red' : (rate < 80 ? 'text-orange' : 'text-green');
+        return `<tr>
+ <td class="text-mono">${x.port}</td>
+ <td class="text-muted">${x.protocol || '--'}</td>
+ <td>${x.service || '--'}</td>
+ <td class="text-mono">${x.hits || 0}</td>
+ <td class="text-mono">${Math.round(x.bandwidth || 0)} Mbps</td>
+ <td class="text-mono ${rateCls}">${rate}%</td>
+ </tr>`;
+      }).join('');
+    }
+
+    /** 当前时间窗口（顶部栏筛选器）对应的毫秒数；返回 Infinity 表示"全部时间" */
+    function windowMs() {
+      const v = document.getElementById('timeRange').value;
+      if (v === 'all') return Infinity;
+      return v === '1h' ? 3600e3 : (v === '7d' ? 7 * 86400e3 : 86400e3);
+    }
+
+    /**
+     * 拉取并渲染告警处置概览 + 规则命中 TOP3
+     * 字段顺序：0 id, 1 alert_time, 2 alert_type, 3 risk_level, 4 ip,
+     *           5 username, 6 attempt_count, 7 description, 8 status
+     * 两者都受顶部栏时间窗口筛选。
+     */
+    function loadAlertStats() {
+      /* 改用服务端聚合接口。
+         原实现拉 /api/alerts 全量（实测 3094 条、约 1MB）到浏览器里 filter，
+         只为算 4 个计数 + 规则 TOP3，而且每 30 秒一次。
+         现在由 /api/alerts/summary 在 SQL 层 GROUP BY，响应约 200 字节。
+         时间窗口仍由顶部栏决定：把毫秒窗口换成小时数传给后端；
+         选「全部时间」时（windowMs 返回 Infinity）不传 hours，后端统计全部。 */
+      const ms = windowMs();
+      const qs = Number.isFinite(ms) ? '?hours=' + Math.max(1, Math.round(ms / 3600e3)) : '';
+      fetch('/api/alerts/summary' + qs).then(r => r.json()).then(s => {
+        if (!s || typeof s !== 'object') return;
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        set('asPending', s.pending || 0);
+        set('asHandled', s.handled || 0);
+        set('asFalse', s.false_positive || 0);
+        set('asHigh', s.high || 0);
+
+        // 规则命中 TOP3（后端已聚合排序，这里只负责渲染）
+        const top = Array.isArray(s.top_rules) ? s.top_rules : [];
+        const box = document.getElementById('ruleHits');
+        if (box) {
+          box.innerHTML = top.length
+            ? top.map((r, i) =>
+                '<div class="rule-row"><span class="rk">' + (i + 1) + '</span>' +
+                '<span class="rn" title="' + (r.name || '') + '">' + (r.name || '') + '</span>' +
+                '<span class="rv">' + (r.count || 0) + '</span></div>').join('')
+            : '<div class="text-muted" style="font-size:.74rem">窗口内无命中</div>';
+        }
+      }).catch(() => { /* 概览失败不影响主视图 */ });
+    }
+
+    /** 更新真实主机资源卡片（psutil 采集）+ CPU 迷你趋势 + 节点健康度 */
+    function updateHostCard(host) {
+      const box = document.getElementById('hostMetrics');
+      const stamp = document.getElementById('hostStamp');
+      if (!box) return;
+
+      if (!host || !host.available) {
+        box.innerHTML = '<div class="text-muted" style="font-size:.78rem">主机指标不可用'
+          + (host && host.error ? '：' + host.error : '') + '</div>';
+        if (stamp) stamp.textContent = '不可用';
+        return;
+      }
+
+      const items = host.items || [];
+      const cpu = items.find(i => i.key === 'cpu');
+      if (cpu && cpu.value !== null && cpu.value !== undefined) {
+        animateValue('statLoad', cpu.value, '%');
+        pushHist('load', cpu.value);
+        updateSpark('load');
+        const chg = document.getElementById('statLoadChange');
+        if (chg) chg.innerHTML = cpu.value > 80 ? '↑ 高负载' : (cpu.value > 50 ? '→ 中等' : '→ 正常');
+      }
+
+      // 节点健康度：CPU / 内存 / 磁盘占用 三条迷你条
+      const nh = document.getElementById('nodeHealth');
+      if (nh) {
+        const keys = [['cpu', 'CPU'], ['mem', '内存'], ['disk_use', '磁盘']];
+        const rows = keys.map(([k, label]) => {
+          const it = items.find(i => i.key === k);
+          const v = (it && typeof it.value === 'number') ? it.value : null;
+          if (v === null) return '';
+          const col = v > 80 ? 'var(--accent-red)' : (v > 60 ? 'var(--accent-orange)' : 'var(--accent-1)');
+          return '<div class="node-row"><span class="nn">' + label + '</span>' +
+                 '<span class="nb"><i style="width:' + Math.min(100, v) + '%;background:' + col + '"></i></span>' +
+                 '<span class="nv">' + v.toFixed(0) + '%</span></div>';
+        }).join('');
+        if (rows) nh.innerHTML = rows;
+      }
+
+      box.innerHTML = items.map(it => {
+        const v = (it.value === null || it.value === undefined) ? '--' : it.value;
+        let cls = '';
+        if ((it.key === 'cpu' || it.key === 'mem' || it.key === 'disk_use') && typeof it.value === 'number') {
+          cls = it.value > 80 ? 'text-red' : (it.value > 60 ? 'text-orange' : '');
+        }
+        return `<div class="host-metric">
+ <div class="hm-label">${it.label}</div>
+ <div class="hm-value ${cls}">${v}<span class="hm-unit">${it.unit || ''}</span></div>
+ <div class="hm-detail">${it.detail || ''}</div>
+ </div>`;
+      }).join('');
+
+      const plat = document.getElementById('hostPlatform');
+      if (plat && host.platform) plat.textContent = host.platform + ' · 启动于 ' + (host.uptime_hint || '--');
+
+      if (stamp) {
+        stamp.textContent = '采样于 ' + (host.sampled_at || '--')
+          + (host.request_avg_ms ? ' · 接口均耗时 ' + host.request_avg_ms + ' ms' : '');
+      }
+    }
+
+    /** 主机指标轮询兜底 */
+    function pollHostMetrics() {
+      fetch('/api/host').then(r => r.ok ? r.json() : null)
+        .then(h => { if (h) updateHostCard(h); })
+        .catch(() => {});
+    }
+
+    /** 实时时钟 — 每秒更新侧边栏时间 */
+    function updateClock() {
+      document.getElementById('navClock').textContent = new Date().toLocaleString('zh-CN');
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    /** 顶部栏：搜索框展开/收起 + 关键字过滤实时攻击列表 */
+    (function initTopbar() {
+      const wrap = document.getElementById('tbSearch');
+      const btn = document.getElementById('btnSearch');
+      const input = document.getElementById('tbSearchInput');
+      btn.addEventListener('click', () => {
+        if (!wrap.classList.contains('open')) {
+          wrap.classList.add('open');
+          input.focus();
+        } else if (!input.value) {
+          wrap.classList.remove('open');
+        }
+      });
+      input.addEventListener('input', () => {
+        feedKeyword = input.value.trim();
+        renderLiveFeed(lastTimeline);
+      });
+      document.getElementById('timeRange').addEventListener('change', loadAlertStats);
+    })();
+
+    /** DOM 加载完成后初始化图表 */
+    document.addEventListener('DOMContentLoaded', () => {
+      initCharts();
+      updateTrafficTrend();
+      loadAlertStats();
+      pollHostMetrics();
+      setInterval(pollHostMetrics, 5000);   // 主机指标兜底轮询
+      setInterval(loadAlertStats, 30000);   // 告警数据变化较慢，30 秒刷新一次
+    });
+    </script>
+  {% endblock %}

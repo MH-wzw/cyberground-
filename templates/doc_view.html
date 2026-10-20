@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{# 本页由 base.html 提供导航栏、身份下拉与公共脚本，此处只关注页面内容。 #}
+
+{% block page_css %}
+  <style>
+    /* 文档页排版 —— 以可读性为先，不做装饰性处理 */
+    .doc-wrap { max-width: 920px; margin: 0 auto; padding: 28px 24px 64px; }
+    .doc-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; margin-bottom: 22px; padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .doc-head h1 { font-size: 1.35rem; margin: 0; }
+    .doc-head .doc-sub { font-size: .76rem; color: var(--text-muted); margin-top: 4px; }
+
+    .doc-body { font-size: .9rem; line-height: 1.9; color: var(--text-secondary); }
+    .doc-body h1 { font-size: 1.3rem; margin: 32px 0 12px; color: var(--text-primary); }
+    .doc-body h2 {
+      font-size: 1.06rem; margin: 30px 0 12px; padding-bottom: 7px;
+      color: var(--text-primary); border-bottom: 1px solid var(--border-subtle);
+    }
+    .doc-body h3 { font-size: .95rem; margin: 22px 0 9px; color: var(--text-primary); }
+    .doc-body p { margin: 9px 0; }
+    .doc-body strong { color: var(--text-primary); font-weight: 600; }
+    .doc-body code {
+      font-family: var(--font-mono); font-size: .82em;
+      padding: 1px 5px; border-radius: 3px;
+      background: rgba(139,152,169,.12); color: #a5b4c8;
+    }
+    .doc-body ul, .doc-body ol { margin: 9px 0 9px 4px; padding-left: 22px; }
+    .doc-body li { margin: 4px 0; }
+    .doc-body blockquote {
+      margin: 14px 0; padding: 10px 16px;
+      border-left: 3px solid var(--border-glow);
+      background: rgba(17,23,38,.5);
+      color: var(--text-secondary); font-size: .86rem;
+    }
+    .doc-body hr { margin: 28px 0; border-color: var(--border-subtle); }
+
+    /* 表格 —— 紧凑信息型，参考运维文档的密度 */
+    .doc-table {
+      width: 100%; margin: 14px 0; border-collapse: collapse;
+      font-size: .82rem;
+    }
+    .doc-table th, .doc-table td {
+      padding: 7px 11px; text-align: left; vertical-align: top;
+      border: 1px solid var(--border-subtle);
+    }
+    .doc-table th {
+      background: rgba(139,152,169,.08); color: var(--text-primary);
+      font-weight: 600; white-space: nowrap;
+    }
+    .doc-table tbody tr:nth-child(even) { background: rgba(139,152,169,.03); }
+
+    @media (max-width: 768px) {
+      .doc-wrap { padding: 18px 14px 48px; }
+      .doc-table { font-size: .76rem; }
+      .doc-table th, .doc-table td { padding: 5px 7px; }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="doc-wrap">
+    <div class="doc-head">
+      <div>
+        <h1>{{ title }}</h1>
+        <div class="doc-sub">本作品的数据透明度承诺：明确区分真实数据与沙箱模拟数据</div>
+      </div>
+      <a class="btn-dark" href="/">← 返回态势大屏</a>
+    </div>
+    <div class="doc-body">
+      {{ body|safe }}
+    </div>
+  </div>
+{% endblock %}

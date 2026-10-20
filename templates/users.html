@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+{% set page_title = "用户管理 | CyberGuard 安全运营平台" %}
+{% set nav_active = "users" %}
+
+{# 本页由 base.html 提供导航栏、身份下拉与公共脚本，此处只关注页面内容。 #}
+
+{% block content %}
+  <div class="main-content page-enter">
+    <div class="container-fluid px-4 py-3">
+
+      <div class="card-dark mb-4 cg-rv cg-rv-delay-1">
+        <div class="card-header-dark">
+          <span>用户账户管理</span>
+          <div>
+            <button id="refreshBtn" class="btn-glow">刷新</button>
+          </div>
+        </div>
+        <div class="card-body-dark">
+          <div class="text-muted mb-3" style="font-size:0.78rem">
+            管理员可调整用户角色与状态。系统强制保证：<b>至少保留一个可用管理员</b>，
+            且管理员<b>不能修改或禁用自己的账户</b>。普通用户（只读）的任何写操作在服务端都会被拒绝。
+          </div>
+          <div class="table-responsive">
+            <table class="table table-dark table-hover">
+              <thead>
+                <tr>
+                  <th style="width:70px">ID</th>
+                  <th>用户名</th>
+                  <th style="width:190px">角色</th>
+                  <th style="width:150px">状态</th>
+                  <th>创建时间</th>
+                  <th>最近登录</th>
+                  <th style="width:80px">登录次数</th>
+                  <th style="width:230px">操作</th>
+                </tr>
+              </thead>
+              <tbody id="usersTable">
+                <tr><td colspan="8"><div class="cg-skel"><i></i><i></i><i></i></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 重置密码弹窗 -->
+  <div class="modal fade" id="pwModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content modal-dark">
+        <div class="modal-header">
+          <h5 class="modal-title">重置密码</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-secondary" style="font-size:0.85rem">
+            为用户 <b id="pwUser"></b> 设置新密码（至少 6 位）。
+          </p>
+          <input type="password" class="form-control-dark form-control" id="newPassword"
+          placeholder="请输入新密码" autocomplete="new-password">
+          <input type="hidden" id="pwUserId">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-dark" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn-glow" id="pwSubmitBtn">确认重置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+  var CSRF = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+  var ME_ID = {{ current_user.id }};
+  var pwModal = null;
+  var users = [];
+
+  /** 主题化通知（与其它页面一致） */
+  function cgToast(msg, kind, ms) {
+    var w = document.getElementById('cgToastWrap');
+    if (!w) { w = document.createElement('div'); w.id = 'cgToastWrap'; w.className = 'cg-toast-wrap'; document.body.appendChild(w); }
+    var el = document.createElement('div');
+    el.className = 'cg-toast ' + (kind || '');
+    el.textContent = msg;
+    w.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = '0'; el.style.transition = 'opacity .3s';
+      setTimeout(function () { el.remove(); }, 320);
+    }, ms || 2600);
+  }
+
+  // 所有写请求自动携带 CSRF 令牌
+  $.ajaxSetup({ headers: { 'X-CSRF-Token': CSRF } });
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function loadUsers() {
+    $('#usersTable').html('<tr><td colspan="8"><div class="cg-skel"><i></i><i></i><i></i></div></td></tr>');
+    $.get('/api/users')
+      .done(function (d) { users = d; render(); })
+      .fail(function (x) {
+        $('#usersTable').html('<tr><td colspan="8" class="text-center py-5 text-red">'
+          + (x.status === 403 ? '权限不足：仅管理员可访问' : '数据加载失败（HTTP ' + x.status + '）')
+          + '</td></tr>');
+      });
+  }
+
+  function render() {
+    if (!users.length) {
+      $('#usersTable').html('<tr><td colspan="8"><div class="cg-empty">暂无用户</div></td></tr>');
+      return;
+    }
+    var h = '';
+    users.forEach(function (u) {
+      // u = [id, username, role, status, created_at, last_login_at, login_count]
+      var id = u[0], name = u[1], role = u[2], status = u[3];
+      var isSelf = (id === ME_ID);
+      var isAdmin = (role === 'admin');
+      var roleBadge = isAdmin
+        ? '<span class="role-pill admin">管理员</span>'
+        : '<span class="role-pill viewer">普通用户</span>';
+
+      // 角色下拉：不允许改自己的角色
+      var roleSel = '<select class="form-select-dark form-select form-select-sm user-role-sel" data-id="' + id + '"'
+        + (isSelf ? ' disabled title="不能修改自己的角色"' : '') + '>'
+        + '<option value="viewer"' + (!isAdmin ? ' selected' : '') + '>普通用户（只读）</option>'
+        + '<option value="admin"' + (isAdmin ? ' selected' : '') + '>管理员（可操作）</option>'
+        + '</select>';
+
+      // 状态开关
+      var active = (status === 'active');
+      var statusBtn = '<button class="status-toggle ' + (active ? 'on' : 'off') + '" data-id="' + id + '"'
+        + '" data-status="' + status + '"' + (isSelf ? ' disabled title="不能禁用自己的账户"' : '') + '>'
+        + (active ? '启用' : ' 已禁用') + '</button>';
+
+      h += '<tr class="data-flash">'
+        + '<td class="text-mono">' + id + '</td>'
+        + '<td><b>' + esc(name) + '</b>' + (isSelf ? ' <span class="self-tag">当前账户</span>' : '') + '</td>'
+        + '<td>' + roleBadge + roleSel + '</td>'
+        + '<td>' + statusBtn + '</td>'
+        + '<td class="text-mono" style="font-size:0.78rem">' + esc(u[4] || '--') + '</td>'
+        + '<td class="text-mono" style="font-size:0.78rem">' + esc(u[5] || '从未登录') + '</td>'
+        + '<td class="text-mono">' + (u[6] || 0) + '</td>'
+        + '<td>'
+        +   '<button class="btn-mini pw-btn" data-id="' + id + '" data-name="' + esc(name) + '">重置密码</button> '
+        +   '<button class="btn-mini danger del-btn" data-id="' + id + '" data-name="' + esc(name) + '"'
+        +     (isSelf ? ' disabled title="不能删除自己的账户"' : '') + '>删除</button>'
+        + '</td>'
+        + '</tr>';
+    });
+    $('#usersTable').html(h);
+  }
+
+  // ---- 事件委托 ----
+  $(document).on('change', '.user-role-sel', function () {
+    var id = $(this).data('id'), role = $(this).val();
+    $.ajax({
+      url: '/api/users/update/' + id, method: 'POST', contentType: 'application/json',
+      data: JSON.stringify({ role: role })
+    }).done(function (r) {
+      cgToast(r.message || '角色已更新', 'ok');
+      loadUsers();
+    }).fail(function (x) {
+      var m = (x.responseJSON && x.responseJSON.message) || ('更新失败（HTTP ' + x.status + '）');
+      cgToast(m, 'err');
+      loadUsers();
+    });
+  });
+
+  $(document).on('click', '.status-toggle', function () {
+    var id = $(this).data('id'), cur = $(this).data('status');
+    var next = (cur === 'active') ? 'disabled' : 'active';
+    $.ajax({
+      url: '/api/users/update/' + id, method: 'POST', contentType: 'application/json',
+      data: JSON.stringify({ status: next })
+    }).done(function (r) {
+      cgToast(r.message || '状态已更新', 'ok');
+      loadUsers();
+    }).fail(function (x) {
+      var m = (x.responseJSON && x.responseJSON.message) || ('操作失败（HTTP ' + x.status + '）');
+      cgToast(m, 'err');
+      loadUsers();
+    });
+  });
+
+  $(document).on('click', '.pw-btn', function () {
+    $('#pwUserId').val($(this).data('id'));
+    $('#pwUser').text($(this).data('name'));
+    $('#newPassword').val('');
+    pwModal.show();
+  });
+
+  $('#pwSubmitBtn').click(function () {
+    var id = $('#pwUserId').val(), pw = $('#newPassword').val();
+    if (!pw || pw.length < 6) { cgToast('新密码至少 6 位', 'warn'); return; }
+    $(this).prop('disabled', true);
+    $.ajax({
+      url: '/api/users/update/' + id, method: 'POST', contentType: 'application/json',
+      data: JSON.stringify({ password: pw })
+    }).done(function (r) {
+      cgToast(r.message || '密码已重置', 'ok');
+      pwModal.hide();
+    }).fail(function (x) {
+      var m = (x.responseJSON && x.responseJSON.message) || ('重置失败（HTTP ' + x.status + '）');
+      cgToast(m, 'err');
+    }).always(function () { $('#pwSubmitBtn').prop('disabled', false); });
+  });
+
+  $(document).on('click', '.del-btn', function () {
+    var id = $(this).data('id'), name = $(this).data('name');
+    if (!confirm('确定要删除用户「' + name + '」吗？该操作不可撤销。')) return;
+    $.ajax({
+      url: '/api/users/delete/' + id, method: 'POST', contentType: 'application/json', data: '{}'
+    }).done(function (r) {
+      cgToast(r.message || '已删除', 'ok');
+      loadUsers();
+    }).fail(function (x) {
+      var m = (x.responseJSON && x.responseJSON.message) || ('删除失败（HTTP ' + x.status + '）');
+      cgToast(m, 'err');
+    });
+  });
+
+  $('#refreshBtn').click(loadUsers);
+
+  $(function () {
+    pwModal = new bootstrap.Modal(document.getElementById('pwModal'));
+    loadUsers();
+  });
+  </script>
+{% endblock %}

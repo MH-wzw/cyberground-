@@ -1,0 +1,1306 @@
+/* ==========================================================================
+   CyberGuard · 设计系统 v40 —— SOC 深炭黑（B 端安全监控看板）
+   ==========================================================================
+   2026-10-16 按用户指定重构为「安全监控平台」B 端深色看板：
+     页面底 深炭黑 #0B0D10   卡片 深灰 #161A20
+     主色 亮翡翠绿 #34D399   警告 琥珀黄 #FBBF24   高危 红 #F87171
+     主文字 白 #F2F5F3       辅助文字 浅灰 #B9C1C9
+     卡片统一圆角 + 柔和黑色阴影，简约现代。
+   配色来源：designprompts.dev · Corporate Trust
+     选型理由：翡翠绿（#34D399）在深色底上对比度高且不刺眼，
+     与「安全 / 已防护」的语义一致；青碧（#2DD4BF）作为邻近色承担渐变，
+     避免单色系显得单调。
+
+   ⚠ 这是从 v38「Nocturne 深空」整体反转的一次换肤，**不是调参**：
+     深色主题靠「底色深 + 半透明玻璃 + 发光」建立层次，这三件事在白底上
+     全部失效甚至反效果。因此本版改用 Corporate Trust 的三件套：
+       1. 纯白卡片 + 1px Slate 描边 + Indigo 倾向的**彩色阴影**做层次
+          （彩色阴影是这套风格的签名：中性灰阴影会让白卡显脏）
+       2. 所有投影固定为 rgba(79,70,229,·)，绝不用纯黑阴影
+       3. 语义色下沉到 600/700 级 —— 深空色板的亮绿/亮橙/亮红在白底上
+          只有 2.1~2.6:1，连 ≥3:1 的图形门槛都达不到（已实测）
+
+   ⚠ 选择器必须用 body.theme-dash：
+     dark-theme.css 里 :root 与 body.theme-dash 是两套调色板，
+     body.theme-dash 优先级更高。只用 :root 会被整块盖掉（已踩过）。
+
+   ⚠ 兼容别名：历史类名引用 --gold / --accent-blue 等旧变量名，
+     cgTheme()（cyberguard.js）也从这些名字读色给 ECharts。
+     因此旧名全部保留，但指向新色值 —— 图表与遗留样式自动跟随新主题。
+   ========================================================================== */
+
+body.theme-dash {
+  /* ---- 1. 明度分层（SOC 深炭黑） ----
+     深色主题的层次靠「明度差」：页面底最深，卡片抬一档，
+     浮层再抬一档。全部实色 —— 半透明叠层在多卡片同屏时
+     会引发合成层爆炸（此前踩过）。 */
+  --bg-primary:   #0B0D10;   /* 页面底：深炭黑 */
+  --bg-secondary: #11151B;   /* 次级区块 / 表头 */
+  --bg-elevated:  #1B2129;   /* 抬升层：浮层 / 聚焦输入框 */
+  --bg-panel:     #161A20;   /* 卡片面板：深灰（实色） */
+  --bg-panel-hover: #1A1F27;
+  --bg-card:      #161A20;   /* 兼容旧名 */
+  --bg-card-hover:#1A1F27;
+  --bg-input:     #10141A;
+  --bg-dropdown:  #1B2129;
+  --bg-overlay:   rgba(4, 6, 9, .62);   /* 遮罩：需压住内容 */
+  --bg-overlay-soft: rgba(4, 6, 9, .30);
+  --surface-sunken: #10141A;              /* 内凹：表格斑马纹 / 代码块 */
+
+  /* ---- 2. 边界（深色靠「微亮描边」界定，1px 即可） ---- */
+  --border-subtle: #232B34;   /* 分隔线 */
+  --border-control:#323C48;   /* 输入框 / 控件边 */
+  --border-glow:   rgba(52, 211, 153, .45);  /* 翡翠强调边（hover / focus） */
+  --line-soft:     #1B2129;   /* 极淡分隔 */
+
+  /* ---- 3. 文字（白 + 浅灰，全部对 #161A20 卡片底 ≥ 4.5:1） ---- */
+  --text-primary:   #F2F5F3;  /* 主文字白    15.9:1 */
+  --text-secondary: #B9C1C9;  /* 辅助浅灰     9.4:1 */
+  --text-muted:     #98A2AD;  /*              6.9:1 */
+  --text-faint:     #7D8894;  /*              4.8:1 */
+
+  /* ---- 4. 双强调（翡翠绿 + 青碧） ----
+     主强调：亮翡翠绿 Emerald 400 —— 主按钮 / 链接 / 激活态 / 焦点环
+     次强调：青碧 Teal 400 —— 品牌渐变另一半 / 图表第二序列
+     -hi = hover 提亮，-dim = active / 压深。 */
+  --accent-1:     #34D399;  /* Emerald 400  卡片底上 8.9:1 */
+  --accent-1-hi:  #6EE7B7;  /* Emerald 300  hover 提亮 */
+  --accent-1-dim: #10B981;  /* Emerald 500  active 压深 */
+  --accent-1-rgb: 52 211 153;
+  --accent-2:     #2DD4BF;  /* Teal 400 */
+
+  /* ---- 5. 语义色 ----
+     深色主题语义色用 400 级亮调：深底上需要足够的亮度才读得出，
+     400 级在 #161A20 卡片底上全部 ≥ 6:1（实测）。
+     「-dim」为同色相 13% 透明调，用作徽章 / 标签底 + 亮色文字。 */
+  --accent-green:     #34D399;  /* Emerald 400   8.9:1 */
+  --accent-green-rgb: 52 211 153;
+  --accent-orange:    #FBBF24;  /* Amber 400    10.3:1（琥珀黄警告） */
+  --accent-red:       #F87171;  /* Red 400       6.3:1（高危） */
+  --danger-text:      #F87171;
+  --danger-text-rgb:  248 113 113;
+  --accent-purple:    #A78BFA;  /* Violet 400（图表第四序列用） */
+  --accent-pink:      #F472B6;  /* Pink 400 */
+
+  --ok-dim:   rgba(52, 211, 153, .13);
+  --warn-dim: rgba(251, 191, 36, .13);
+  --crit-dim: rgba(248, 113, 113, .14);
+  --brand-dim:rgba(52, 211, 153, .12);
+
+  /* ---- 6. 品牌渐变：翡翠 → 青碧 ---- */
+  --c1: #34D399;
+  --c2: #2DD4BF;
+  --brand-grad: linear-gradient(92deg, var(--c1), var(--c2));
+
+  /* ---- 兼容别名（旧变量名 → 新色值，历史样式与 cgTheme 自动跟随） ---- */
+  --accent-blue:     var(--accent-1);
+  --accent-blue-dim: var(--accent-1-dim);
+  --accent-blue-rgb: var(--accent-1-rgb);
+  /* 这三档原本是深底上的青色按钮色阶；本版换成翡翠三档 */
+  --accent-blue-btn: #34D399;
+
+  /* ---- 7. 阴影 / 发光 ----
+     深炭黑主题的阴影回归纯黑柔影：深底上彩色阴影看不见，
+     柔和的黑影 + 1px 微亮描边才是层次来源。
+     唯一允许的彩色发光：主按钮 hover 的翡翠辉光。 */
+  --shadow-pop:   0 20px 44px -12px rgba(0, 0, 0, .60);
+                   0 6px 12px -6px rgba(0, 0, 0, .35);
+  /* 唯一允许的辉光：主按钮 hover（翡翠绿） */
+  --glow-cta: 0 4px 16px 0 rgba(52, 211, 153, .35);
+  /* 卡片静态阴影：柔和黑影，配合 1px 描边 */
+                  0 4px 14px 0 rgba(0, 0, 0, .22);
+  --shadow-card-hover: 0 12px 28px -6px rgba(0, 0, 0, .50),
+                       0 6px 12px -6px rgba(0, 0, 0, .35);
+
+  /* 网格：深色上用微亮白点/线 */
+  --grid-color: rgba(255, 255, 255, .035);
+
+  /* ---- 8. 字号阶梯（主数字与正文拉开 5.8 倍）----
+     高级感来自"跨度"而非绝对值：一个 64px 主数字 + 12px 正文的页面
+     才是仪表盘，四个 44px 等大数字的页面只是报表。
+     因此新增 --fs-8 作为"每屏唯一焦点"专用档，一页只允许一个。 */
+  --fs-1: 11px;
+  --fs-2: 12px;
+  --fs-4: 15px;
+  --fs-5: 20px;
+  --fs-6: 28px;
+  --fs-7: 44px;
+  --fs-8: 64px;
+
+  /* ---- 8b. 呼吸节拍：全站唯一周期 ----
+     此前 wavePulse 1.1s / cgPulse 1.2s / cgPulse 2.1s / avatarGlow 3.6s
+     四种周期并存，各处光点以不同频率闪烁 —— 用户说不出为什么，
+     但会觉得"乱"。呼吸类动画应像节拍器：全站一个节奏。
+     例外：连接丢失闪烁（connLostBlink）保留短周期，它是告警语义，快是刻意的。 */
+  --pulse: 2.4s;
+
+  /* ---- 9. 圆角 ---- */
+  --r-1: 10px;
+  --r-2: 14px;
+  --r-3: 18px;
+  --radius-sm: var(--r-1);
+  --radius-md: var(--r-2);
+  --radius-lg: var(--r-3);
+
+  /* 间距刻度：--s-1/--s-6 清理后已无引用，保留实际在用的这几档。
+     （注意：一行写多个变量时，删除脚本无法只删其中一个 —— 千万别再整行删。） */
+  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-7: 48px;
+
+  --wrap: 1400px;
+}
+
+/* ==========================================================================
+   一、页面底 + 氛围光（静态，无常驻动画）
+   --------------------------------------------------------------------------
+   Corporate Trust 的「Background Blobs」：两团大尺寸 Indigo / Violet 光斑，
+   低透明度（8%~12%）+ 重模糊。它们的作用是给纯白背景一点品牌色倾向，
+   而不是制造可见的色块——一旦肉眼能看出这是个圆，就过量了。
+   ========================================================================== */
+body {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+body.theme-dash::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(circle 640px at 8% -10%,  rgba(52, 211, 153, .07), transparent 62%),
+    radial-gradient(circle 780px at 96% 4%,   rgba(45, 212, 191, .06), transparent 62%),
+    radial-gradient(circle 560px at 50% 112%, rgba(52, 211, 153, .04), transparent 62%);
+}
+
+/* 点阵网格：中性深灰 4.5% —— 提供纸面质感，不参与信息表达。
+   此前用紫点（rgba(157,140,255,.055)）在深底上成立，
+   换到白底后紫点会显「脏」，故改为与文字同族的 Slate。 */
+body.theme-dash::after {
+  content: '';
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image: radial-gradient(var(--grid-color) 1px, transparent 1px);
+  background-size: 26px 26px;
+  -webkit-mask-image: radial-gradient(ellipse 88% 72% at 50% 32%, #000 26%, transparent 100%);
+  mask-image: radial-gradient(ellipse 88% 72% at 50% 32%, #000 26%, transparent 100%);
+}
+
+.cg-wrap,
+.main-content,
+.page-enter { position: relative; z-index: 1; }
+
+/* ==========================================================================
+   二、排版
+   ========================================================================== */
+.label-caps {
+  font-size: var(--fs-1);
+  font-weight: 400;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+.grad-text {
+  background: var(--brand-grad);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* ==========================================================================
+   三、面板 —— 恢复容器，但材质是"深空玻璃"
+   --------------------------------------------------------------------------
+   上一版无容器实验的教训：没有边界，眼睛无处落脚，页面散架。
+   本版恢复：半透明填充 + 1px 发丝边 + 圆角。
+   不用 backdrop-filter：半透明填充已能透出底层光晕，
+   且避免了多卡片 + 图表同屏时的合成层爆炸。
+   ========================================================================== */
+body.theme-dash .card-dark,
+body.theme-dash .card,
+body.theme-dash .stat-card {
+  position: relative;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-2);
+  box-shadow: none;
+  transition: background .2s, border-color .2s;
+}
+body.theme-dash .card-dark:hover,
+body.theme-dash .card:hover,
+body.theme-dash .stat-card:hover {
+  background: var(--bg-panel-hover);
+  border-color: rgba(52, 211, 153, .32);
+}
+/* 清掉历史样式的 ::before/::after 装饰（聚光灯、顶部高光等），
+   指标卡顶线在本节末尾单独重建 */
+body.theme-dash .card-dark::before,
+body.theme-dash .card::before,
+body.theme-dash .card-dark::after,
+body.theme-dash .card::after { content: none; }
+
+/* 面板结构：header 通栏 + body 内边距（结构来自 dark-theme.css，这里只调质感） */
+body.theme-dash .card-header-dark {
+  background: transparent;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: var(--r-2) var(--r-2) 0 0;
+  padding: 13px 18px;
+  margin: 0;
+  font-size: var(--fs-4);
+  font-weight: 600;
+  letter-spacing: -.01em;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-start;   /* 标题固定居左（space-between 会把单标题推到中/右侧） */
+}
+/* 标题左侧一道渐变短标 —— 全站唯一的小面积渐变点 */
+body.theme-dash .card-header-dark::before {
+  content: '';
+  width: 3px; height: 14px;
+  border-radius: 2px;
+  background: var(--brand-grad);
+  flex: none;
+  align-self: center;
+}
+/* 第二个及之后的直接子元素（时间戳 / 说明 / 操作按钮）推到右侧 */
+body.theme-dash .card-header-dark > * + * { margin-left: auto; }
+body.theme-dash .card-body-dark { padding: 18px; }
+
+/* ==========================================================================
+   四、指标卡 —— 顶部一道品牌渐变线，是整个体系的视觉签名
+   ========================================================================== */
+body.theme-dash .stat-card {
+  padding: 18px 20px 20px;
+  min-height: 104px;
+  overflow: hidden;
+}
+body.theme-dash .stat-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--c1), var(--c2));
+}
+body.theme-dash .stat-card.danger::before {
+  background: linear-gradient(90deg, var(--accent-red), var(--accent-pink));
+}
+body.theme-dash .stat-card.warning::before {
+  background: linear-gradient(90deg, var(--accent-orange), var(--accent-red));
+}
+body.theme-dash .stat-card.success::before {
+  background: linear-gradient(90deg, var(--accent-green), var(--c1));
+}
+body.theme-dash .stat-card.purple::before {
+  background: linear-gradient(90deg, var(--accent-2), var(--accent-pink));
+}
+
+body.theme-dash .stat-card .stat-icon { display: none; }
+body.theme-dash .stat-card .stat-value {
+  font-size: var(--fs-7);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.035em;
+  line-height: 1;
+  color: var(--text-primary);
+}
+body.theme-dash .stat-card .stat-label {
+  font-size: var(--fs-1);
+  font-weight: 400;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-top: var(--s-3);
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap;
+}
+body.theme-dash .stat-card.info    .stat-value { color: var(--accent-1); }
+body.theme-dash .stat-card.success .stat-value { color: var(--accent-green); }
+body.theme-dash .stat-card.warning .stat-value { color: var(--accent-orange); }
+body.theme-dash .stat-card.danger  .stat-value { color: var(--accent-red); }
+body.theme-dash .stat-card.purple  .stat-value { color: var(--accent-2); }
+/* 语义色数字与渐变线同色系 —— 数字本身发光不做，靠色彩关联即可 */
+
+/* ==========================================================================
+   五、网格
+   ========================================================================== */
+.bento {
+  display: grid;
+  gap: var(--s-4);
+  grid-template-columns: repeat(4, 1fr);
+}
+.bento > .b-2x2 { grid-column: span 2; grid-row: span 2; }
+.bento > .b-2x1 { grid-column: span 2; }
+.bento > .b-1x2 { grid-row: span 2; }
+.bento > .b-4x1 { grid-column: span 4; }   /* 全宽横条：主机资源带等 */
+@media (max-width: 1080px) {
+  .bento { grid-template-columns: repeat(2, 1fr); }
+  .bento > .b-2x2, .bento > .b-2x1 { grid-column: span 2; grid-row: span 1; }
+  .bento > .b-1x2 { grid-row: span 1; }
+  .bento > .b-4x1 { grid-column: span 2; grid-row: span 1; }
+}
+.dashboard-grid { display: grid; gap: var(--s-4); }
+.col-span-2 { grid-column: span 2; }
+.col-span-3 { grid-column: span 3; }
+.col-span-4 { grid-column: span 4; }
+
+/* ==========================================================================
+   六、控件
+   ========================================================================== */
+body.theme-dash .btn-glow,
+body.theme-dash .btn-dark,
+body.theme-dash .btn-primary {
+  border-radius: var(--r-1);
+  font-size: var(--fs-2);
+  font-weight: 500;
+  padding: 7px 15px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  box-shadow: none;
+  transition: background .2s, border-color .2s, color .2s, box-shadow .2s, transform .12s;
+}
+body.theme-dash .btn-glow:hover,
+body.theme-dash .btn-dark:hover {
+  background: var(--surface-sunken);
+  border-color: var(--border-glow);
+  color: var(--text-primary);
+}
+body.theme-dash .btn-glow:active,
+body.theme-dash .btn-dark:active { transform: translateY(1px); }
+
+/* 主按钮：翡翠→青碧渐变实底；hover 辉光是全站唯一允许的 box-shadow 发光。
+   ⚠ 翡翠绿是亮色，按钮文字必须用深色（#052E22 对渐变底 ≥7:1），
+   白字在 #34D399 上只有 1.8:1 —— 这是与 Indigo 底（反白字）的方向性差异。 */
+body.theme-dash .btn-glow {
+  background-color: #34D399;   /* 渐变失效时的实色兜底，也让对比度检测读得到底 */
+  background-image: linear-gradient(96deg, #34D399, #2DD4BF);
+  border-color: transparent;
+  color: #052E22;
+  font-weight: 600;
+}
+body.theme-dash .btn-glow:hover {
+  color: #052E22;
+  box-shadow: var(--glow-cta);
+  transform: translateY(-1px);
+}
+body.theme-dash .btn-glow.success {
+  background-color: #34D399;
+  background-image: linear-gradient(96deg, #34D399, #10B981);
+  border-color: transparent;
+  color: #052E22;
+}
+body.theme-dash .btn-glow.success:hover { box-shadow: 0 4px 24px rgba(52, 211, 153, .30); }
+
+body.theme-dash .form-control-dark,
+body.theme-dash .form-select-dark {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-1);
+  color: var(--text-primary);
+  font-size: var(--fs-2);
+  padding: 7px 12px;
+}
+body.theme-dash .form-control-dark:focus,
+body.theme-dash .form-select-dark:focus {
+  background: var(--bg-elevated);
+  border-color: var(--accent-1);
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, .16);
+  outline: none;
+}
+
+/* ==========================================================================
+   七、表格
+   ========================================================================== */
+body.theme-dash .table-dark {
+  color: var(--text-secondary);
+  font-size: var(--fs-2);
+  /* Bootstrap 5.3 的表格颜色不走 color 继承，而是走 --bs-table-color 变量；
+     .table-dark 默认把它设成 #fff，浅色主题下整表文字会变成"白底白字"。
+     必须连同 hover / striped / active 的所有变体一起覆盖。 */
+  --bs-table-color:        var(--text-secondary);
+  --bs-table-bg:           transparent;
+  --bs-table-border-color: var(--line-soft);
+  --bs-table-hover-color:  var(--text-primary);
+  --bs-table-hover-bg:     var(--surface-sunken);
+  --bs-table-striped-color:var(--text-secondary);
+  --bs-table-striped-bg:   transparent;
+  --bs-table-active-color: var(--text-primary);
+  --bs-table-active-bg:    var(--surface-sunken);
+}
+body.theme-dash .table-dark thead th {
+  background: transparent;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: var(--fs-1);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  padding: var(--s-2) var(--s-4);
+}
+body.theme-dash .table-dark tbody td {
+  border-bottom: 1px solid var(--line-soft);
+  padding: var(--s-3) var(--s-4);
+  vertical-align: middle;
+}
+body.theme-dash .table-dark tbody tr { transition: background .18s; }
+body.theme-dash .table-dark tbody tr:hover { background: var(--surface-sunken); }
+
+/* ==========================================================================
+   八、徽章 —— 透明底 + 彩描边，小面积语义提示
+   ========================================================================== */
+body.theme-dash .src-badge,
+body.theme-dash .badge-risk-high,
+body.theme-dash .badge-risk-mid,
+body.theme-dash .badge-risk-low {
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  padding: 2px 7px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+}
+body.theme-dash .src-badge.real { color: var(--accent-green); border-color: rgba(61,220,151,.32); }
+body.theme-dash .src-badge.sim  { color: var(--accent-orange); border-color: rgba(255,180,84,.30); }
+body.theme-dash .src-badge.mock { color: var(--accent-1); border-color: rgba(62,224,240,.30); }
+
+/* ==========================================================================
+   九、滚动条
+   ========================================================================== */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .14); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(52, 211, 153, .45); }
+
+/* ==========================================================================
+   十、进场动画（错峰由 base.html 的 JS 写 transitionDelay）
+   ========================================================================== */
+.cg-rv {
+  opacity: 0;
+  transform: translateY(14px);   /* 位移越小越显高级：22px 像"弹入"，14px 像"落位" */
+  transition: opacity .8s cubic-bezier(.16, 1, .3, 1),
+              transform .8s cubic-bezier(.16, 1, .3, 1);
+}
+.cg-rv.cg-in { opacity: 1; transform: none; }
+/* 下面四档作为无 JS 时的兜底；实际延迟由 base.html 按"行"动态写入 inline style */
+.cg-rv.d1 { transition-delay: 0s; }
+.cg-rv.d2 { transition-delay: .12s; }
+.cg-rv.d3 { transition-delay: .24s; }
+.cg-rv.d4 { transition-delay: .36s; }
+
+/* ==========================================================================
+   十一、telemetry ticker —— 页脚滚动数据条
+   ========================================================================== */
+.cg-ticker {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 1020;
+  height: 30px; overflow: hidden;
+  background: rgba(248, 250, 252, .94);
+  border-top: 1px solid var(--border-subtle);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  display: flex; align-items: center;
+}
+.cg-ticker__track {
+  display: flex; gap: 40px; white-space: nowrap;
+  animation: cgTicker 46s linear infinite;
+  padding-left: 100%;
+}
+.cg-ticker:hover .cg-ticker__track { animation-play-state: paused; }
+.cg-ticker__track b { color: var(--accent-1); font-weight: 500; }
+.cg-ticker__track i { font-style: normal; color: var(--text-muted); }
+@keyframes cgTicker { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+
+/* ==========================================================================
+   十二、图例条 / 只读横幅 —— 轻量横条，不做盒子
+   ========================================================================== */
+body.theme-dash .data-legend,
+body.theme-dash .data-source-bar {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  box-shadow: none;
+}
+body.theme-dash .readonly-banner {
+  background: var(--warn-dim);
+  border: 1px solid #FDE9A9;   /* Amber 200：实色浅黄底上的可见边界 */
+  border-radius: var(--r-1);
+}
+
+/* ==========================================================================
+   十三、浮层（toast / 弹窗）—— 深空底 + 语义左线
+   ========================================================================== */
+body.theme-dash .cg-toast,
+body.theme-dash .alert-toast,
+body.theme-dash .toast {
+  border-radius: var(--r-1);
+  box-shadow: var(--shadow-pop);
+}
+body.theme-dash .alert-toast { border-left: 2px solid var(--accent-red); }
+body.theme-dash .cg-toast    { border-left: 2px solid var(--accent-1); }
+
+/* ==========================================================================
+   十四、Bootstrap 遗留工具类收口
+   ========================================================================== */
+body.theme-dash .text-muted { color: var(--text-muted) !important; }
+body.theme-dash .text-dark, body.theme-dash .text-black, body.theme-dash .text-body { color: var(--text-primary) !important; }
+body.theme-dash .text-black-50, body.theme-dash .text-white-50 { color: var(--text-muted) !important; }
+body.theme-dash .text-danger  { color: var(--danger-text) !important; }
+body.theme-dash .text-success { color: var(--accent-green) !important; }
+body.theme-dash .text-warning { color: var(--accent-orange) !important; }
+body.theme-dash .text-info    { color: var(--accent-1) !important; }
+body.theme-dash .text-primary { color: var(--accent-1) !important; }
+
+body.theme-dash .glow,
+body.theme-dash .glow-blue, body.theme-dash .glow-green,
+body.theme-dash .glow-red, body.theme-dash .glow-cyan { box-shadow: none !important; }
+body.theme-dash hr { border-color: var(--border-subtle); opacity: 1; }
+body.theme-dash a { color: var(--accent-1); text-decoration: none; }
+body.theme-dash a:hover { color: var(--accent-1-hi); text-decoration: none; }
+
+/* ==========================================================================
+   十五、对 dark-theme.css 遗留规则的两处收口
+   （那两处特异性更高或结构不同，必须显式压回）
+   ========================================================================== */
+/* dark-theme.css:405 给语义指标卡加了 border-left —— 面板已有完整边框 */
+body.theme-dash .stat-card.info,
+body.theme-dash .stat-card.danger,
+body.theme-dash .stat-card.warning,
+body.theme-dash .stat-card.success,
+body.theme-dash .stat-card.purple { border-left: 1px solid var(--border-subtle); border-top-color: transparent; }
+/* dark-theme.css 语义 hover 边框色与本系统统一 */
+body.theme-dash .stat-card.info:hover,
+body.theme-dash .stat-card.danger:hover,
+body.theme-dash .stat-card.warning:hover,
+body.theme-dash .stat-card.success:hover,
+body.theme-dash .stat-card.purple:hover { border-color: rgba(167, 139, 250, .40); }
+
+/* ==========================================================================
+   十六、焦点卡 hero —— 每屏唯一视觉锚点
+   --------------------------------------------------------------------------
+   为什么需要它：
+     首页第一行原本是 4 张 44px 等大指标卡 —— 4 个等大焦点 = 没有焦点。
+     无容器化把这个弱点放大：13 个区块完全平铺，视线无处落脚。
+     高级感的第一来源是"主次分明"，而主次最廉价的表达就是字号跨度。
+
+   规则：
+     · 一屏只允许一个 .hero，主数字 64px，其余指标回落 --fs-6（28px）
+     · 大字号用细字重（600→500）：字号越大，700 越显廉价
+     · 顶线加宽到 3px，与普通卡的 2px 形成一级台阶
+   ========================================================================== */
+body.theme-dash .stat-card.hero {
+  padding: 22px 24px 24px;
+  min-height: 132px;
+}
+body.theme-dash .stat-card.hero::before { height: 3px; }
+body.theme-dash .stat-card.hero .stat-value {
+  font-size: var(--fs-8);
+  font-weight: 500;
+  letter-spacing: -.045em;
+  line-height: .96;
+}
+body.theme-dash .stat-card.hero .stat-label {
+  margin-top: var(--s-4);
+  font-size: var(--fs-2);
+  letter-spacing: .12em;
+  color: var(--text-muted);
+}
+/* 非焦点指标回落一档，让 64px 与 28px 之间形成 2.3 倍落差 */
+body.theme-dash .stat-card:not(.hero) .stat-value {
+  font-size: var(--fs-6);
+  font-weight: 600;
+}
+@media (max-width: 1080px) {
+  body.theme-dash .stat-card.hero .stat-value { font-size: 48px; }
+}
+
+/* ==========================================================================
+   十七、可点击指标卡 —— div[onclick] 改 <a> 后的收口
+   --------------------------------------------------------------------------
+   原实现是 <div class="stat-card" onclick="location.href=...">：
+   键盘无法 Tab 聚焦、无 Enter 触发、屏幕阅读器不识别为链接。
+   答辩演示时若用键盘操作会直接穿帮，因此统一改为 <a>。
+   ========================================================================== */
+body.theme-dash a.stat-card {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  cursor: pointer;
+}
+body.theme-dash a.stat-card:focus-visible {
+  outline: 1px solid var(--accent-1);
+  outline-offset: 3px;
+}
+
+/* ==========================================================================
+   十八、行 hover 反馈 —— 左侧竖线滑入
+   --------------------------------------------------------------------------
+   卡片被拍平之后 hover 只剩 4~6% 的背景提亮，几乎不可感知。
+   容器可以没有，但"可供性"不能没有：用一条 2px 竖线滑入替代边框变色，
+   与卡片标题左侧的渐变短标同一种语言。
+   ========================================================================== */
+body.theme-dash .table-dark tbody tr,
+body.theme-dash .cg-row { position: relative; }
+body.theme-dash .table-dark tbody tr::before,
+body.theme-dash .cg-row::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--brand-grad);
+  transform: scaleY(0);
+  transform-origin: center;
+  transition: transform .18s cubic-bezier(.16, 1, .3, 1);
+  pointer-events: none;
+}
+body.theme-dash .table-dark tbody tr:hover::before,
+body.theme-dash .cg-row:hover::before { transform: scaleY(1); }
+
+/* ==========================================================================
+   十九、空态与骨架屏
+   --------------------------------------------------------------------------
+   此前各页用裸文本 "加载中..." / "等待攻击数据..." 占位，字体与位置随意。
+   等待状态也是设计过的界面 —— 评委在数据到达前看到的不应该是"页面坏了"。
+   ========================================================================== */
+body.theme-dash .cg-empty {
+  padding: 46px 16px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--fs-2);
+  letter-spacing: .06em;
+}
+body.theme-dash .cg-empty::before {
+  content: '';
+  display: block;
+  width: 26px; height: 1px;
+  margin: 0 auto 14px;
+  background: var(--brand-grad);
+  opacity: .5;
+}
+body.theme-dash .cg-skel { padding: 18px; }
+body.theme-dash .cg-skel i {
+  display: block;
+  height: 11px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .06);
+  animation: cgSkel var(--pulse) ease-in-out infinite;
+}
+body.theme-dash .cg-skel i + i { margin-top: 11px; }
+body.theme-dash .cg-skel i:nth-child(2) { width: 82%; animation-delay: .12s; }
+body.theme-dash .cg-skel i:nth-child(3) { width: 64%; animation-delay: .24s; }
+@keyframes cgSkel { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+
+/* ==========================================================================
+   二十、告警处置概览 —— 四个色块盒子拍平
+   --------------------------------------------------------------------------
+   原文是旧卡片思路的残留：四项带可见背景色块，与"靠发丝线分区"的
+   全站语言冲突，且四个色块自带四种颜色，又添了四个强调色。
+   现改为：无背景 + 顶部发丝线 + 等宽数字。
+   ========================================================================== */
+body.theme-dash .alert-stat {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 12px 4px;
+  flex: 1;
+  text-align: center;
+}
+body.theme-dash .alert-stat .as-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-5);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -.03em;
+}
+body.theme-dash .alert-stat .as-label {
+  margin-top: 6px;
+  font-size: var(--fs-1);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+body.theme-dash .alert-stat-row {
+  display: flex;
+  border-top: 1px solid var(--line-soft);
+}
+body.theme-dash .alert-stat-row > * + * { border-left: 1px solid var(--line-soft); }
+
+/* ==========================================================================
+   二十一、页面级数据来源条
+   --------------------------------------------------------------------------
+   原先每张卡片挂一个"沙箱模拟"徽章 —— 一句话重复 10 遍不会更可信，
+   只会让橙黄小块变成事实上的第二强调色，稀释真正的语义色。
+   现改为：每页顶部一条极轻的来源说明，讲清楚一次即可。
+   ========================================================================== */
+body.theme-dash .cg-srcbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 9px 2px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: var(--s-5);
+  font-size: var(--fs-1);
+  letter-spacing: .04em;
+  color: var(--text-faint);
+}
+body.theme-dash .cg-srcbar b {
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+body.theme-dash .cg-srcbar i {
+  font-style: normal;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+body.theme-dash .cg-srcbar i::before {
+  content: '';
+  width: 5px; height: 5px; border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+body.theme-dash .cg-srcbar i.real { color: var(--accent-green); }
+body.theme-dash .cg-srcbar i.sim  { color: var(--accent-orange); }
+
+/* ==========================================================================
+   二十二、残留 emoji 兜底
+   --------------------------------------------------------------------------
+   卡片标题里的 emoji 是彩色卡通字形，与单色体系冲突，且跨平台渲染不一致
+   （评委机器上可能显示成方块）。HTML 已逐处清理，此处再兜一层：
+   ::before 渐变短标是唯一的标题装饰，不需要第二套图标系统。
+   ========================================================================== */
+body.theme-dash .stat-card .stat-icon { display: none !important; }
+
+/* ==========================================================================
+   二十三、分页控件三态
+   --------------------------------------------------------------------------
+   原实现给 .page-link 挂了一串工具类（bg-primary/border-primary/bg-card…），
+   当前页因此是一块青色实底色块 —— 与"激活态 = 一道渐变下划线"的全站
+   导航语言不一致，且工具类与设计系统互相打架、hover 完全没反馈。
+   现改为状态由 li 上的 .active / .disabled 驱动，样式全部收口到这里：
+     · 默认  —— 无底色，仅中性文字
+     · hover —— 极淡青底 + 发丝边
+     · 当前页 —— 透明底 + 2px 渐变下划线（＝导航激活态）
+     · 禁用  —— 45% 不透明度 + not-allowed
+   ========================================================================== */
+body.theme-dash .pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0;
+  margin: var(--s-4) 0 var(--s-2);
+}
+body.theme-dash .pagination .page-item { list-style: none; }
+
+body.theme-dash .pagination .page-link {
+  position: relative;
+  display: block;
+  min-width: 34px;
+  padding: 6px 10px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-2);
+  line-height: 1.4;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  text-decoration: none;
+  transition: color .18s, background .18s, border-color .18s;
+}
+
+body.theme-dash .pagination .page-link:hover {
+  color: var(--text-primary);
+  background: var(--brand-dim);
+  border-color: var(--border-subtle);
+}
+
+/* 当前页：与顶部导航激活态同一种语言 —— 下划线，不是色块 */
+body.theme-dash .pagination .page-item.active .page-link {
+  color: var(--accent-1);
+  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
+}
+body.theme-dash .pagination .page-item.active .page-link::after {
+  content: '';
+  position: absolute;
+  left: 8px; right: 8px; bottom: 1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--brand-grad);
+}
+body.theme-dash .pagination .page-item.active .page-link:hover { color: var(--accent-1-hi); }
+
+/* 禁用 / 省略号 */
+body.theme-dash .pagination .page-item.disabled .page-link {
+  color: var(--text-faint);
+  background: transparent;
+  border-color: transparent;
+  opacity: .45;
+  cursor: not-allowed;
+}
+body.theme-dash .pagination .page-item.disabled .page-link:hover {
+  color: var(--text-faint);
+  background: transparent;
+  border-color: transparent;
+}
+body.theme-dash .pagination .page-item.disabled .page-link::after { display: none; }
+
+/* ==========================================================================
+   二十四、数据来源折叠 —— 合规说明退出首屏
+   --------------------------------------------------------------------------
+   图例横幅是"数据透明度承诺"，属于合规说明而非作品亮点，却占据了首屏
+   第一行 —— 评委第一眼看到的是免责声明，不是数据与态势。
+   现改为页面底部的折叠条：默认收起为一行，展开后完整可读，
+   内容一字未删（合规要求：说明必须可查）。
+   用原生 <details>，无 JS、可键盘操作、屏幕阅读器可识别。
+   ========================================================================== */
+body.theme-dash .cg-src-fold {
+  margin-top: var(--s-7);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line-soft);
+}
+body.theme-dash .cg-src-fold > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-1);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  transition: color .18s;
+}
+body.theme-dash .cg-src-fold > summary::-webkit-details-marker { display: none; }
+body.theme-dash .cg-src-fold > summary::before {
+  content: '';
+  width: 14px; height: 1px;
+  background: var(--brand-grad);
+  flex: none;
+}
+body.theme-dash .cg-src-fold > summary::after {
+  content: '›';
+  font-size: 14px;
+  line-height: 1;
+  transform: rotate(90deg);
+  transition: transform .22s cubic-bezier(.16, 1, .3, 1);
+}
+body.theme-dash .cg-src-fold[open] > summary::after { transform: rotate(-90deg); }
+body.theme-dash .cg-src-fold > summary:hover { color: var(--accent-1); }
+body.theme-dash .cg-src-fold > summary:focus-visible {
+  outline: 1px solid var(--accent-1);
+  outline-offset: 3px;
+}
+
+body.theme-dash .cg-src-fold .dl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0 4px;
+  font-size: var(--fs-2);
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+body.theme-dash .cg-src-fold .dl-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+body.theme-dash .cg-src-fold .dl-dot {
+  width: 6px; height: 6px; flex: none;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+body.theme-dash .cg-src-fold .dl-dot.real { background: var(--accent-green); }
+body.theme-dash .cg-src-fold .dl-dot.sim  { background: var(--accent-orange); }
+body.theme-dash .cg-src-fold .dl-links {
+  gap: 18px;
+  padding-top: 2px;
+  font-size: var(--fs-1);
+}
+body.theme-dash .cg-src-fold .dl-links a { color: var(--text-muted); }
+body.theme-dash .cg-src-fold .dl-links a:hover { color: var(--accent-1); }
+
+/* ==========================================================================
+   二十五、告警 toast 常驻 / 合并
+   --------------------------------------------------------------------------
+   原实现所有告警一律 5.5 秒消失。两个问题：
+     · 高危告警在值班人看清之前就消失了 —— 安全语义上不可接受
+     · 攻击浪潮来临时十几条同时堆叠，右上角糊成一片
+   现改为：高危常驻（手动关闭，去掉倒计时条）、普通 5s 自动退场、
+   超出 3 条合并为一条"+N 条同类告警"汇总条。
+   ========================================================================== */
+body.theme-dash .alert-toast.persist { border-left-width: 3px; }
+body.theme-dash .alert-toast.persist::after { display: none; }
+body.theme-dash .alert-toast .toast-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid #FCA5A5;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .1em;
+  color: var(--danger-text);
+  vertical-align: 1px;
+}
+/* 合并汇总条：中性紫，不与真实告警抢注意力 */
+body.theme-dash .alert-toast.alert-merged {
+  background: rgba(21, 18, 38, .94);
+  border: 1px solid var(--border-subtle);
+  border-left: 2px solid var(--accent-2);
+  box-shadow: var(--shadow-pop);
+}
+body.theme-dash .alert-toast.alert-merged::after { display: none; }
+body.theme-dash .alert-toast.alert-merged .toast-title { color: var(--accent-2); }
+body.theme-dash .alert-toast.alert-merged .toast-body {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   二十六、确认弹窗图标（去 emoji 兜底）
+   --------------------------------------------------------------------------
+   cgConfirm 默认图标原是一个 emoji 警告三角：彩色卡通字形，
+   与单色体系冲突，且跨平台渲染不一致（评委机器上可能是一个方块）。
+   现改为一道渐变短标 —— 与卡片标题、折叠条同一种语言。
+   ========================================================================== */
+body.theme-dash .cg-confirm-ico {
+  font-size: 0;
+  width: 34px; height: 3px;
+  margin: 0 auto 16px;
+  border-radius: 2px;
+  background: var(--brand-grad);
+}
+
+/* ==========================================================================
+   二十七～三十三、Uiverse 技法迁移（2026-10-15）
+   --------------------------------------------------------------------------
+   来源：uiverse.io/elements → 官方仓库 uiverse-io/galaxy（MIT）
+   方法：全量解析 3802 个组件做 CSS 技法频谱统计，筛出 7 项可迁移技法。
+   完整规格见 docs/Uiverse技法迁移规格.md。
+
+   迁移原则（三条，务必守住）：
+     1. 抄技法，不抄配色 —— 只引用 Nocturne 现有令牌，零新色值。
+     2. 全部为「交互态增强」，不新增任何常驻动画
+        （社区 hover 行为里辉光只占 14.2%，克制才是主流）。
+     3. 不动信息结构 —— 只改元素"被指到时的反应"，不排新内容。
+   ========================================================================== */
+
+/* ---------- 令牌补充（追加到 8b 节之后，此处就近声明便于阅读） ---------- */
+body.theme-dash {
+  /* 网格线：此前是 transparent，导致 body::before 那层网格实际不可见。
+     玻璃面板背后因此什么都没有 —— 这正是"面板发闷、调透明度也没用"的根因。
+     现在给一道极淡的紫调网格，作为半透明面板的"被摄物"。 */
+  --grid-color: var(--grid-color-fixed, rgba(255, 255, 255, .035));
+  /* 暗角：四角压暗、中心留亮，给平面加景深（参考 uiverse 网格卡的 inset 阴影）。
+     深色主题重新启用 —— 深炭黑底上暗角是景深的主要来源。 */
+  --vignette: inset 0 0 220px rgba(0, 0, 0, .42);
+  /* 弹性缓动：末端轻微过冲，用于开关的挤压回弹 */
+  --ease-spring: cubic-bezier(.8, .5, .2, 1.4);
+  /* 顺滑展开：起步快、收尾稳，用于下划线/亮线类宽度动画 */
+  --ease-glide: cubic-bezier(.16, 1, .3, 1);
+}
+
+/* ==========================================================================
+   T4 · 背景：网格 + 暗角 + 静态光斑（根因修复）
+   --------------------------------------------------------------------------
+   来源：Inputs/MijailVillegas_shaggy-husky-62.html 的 .card
+   仍是全站唯一 fixed 层（body::before），不逐卡片加背景 ——
+   每卡一层合成开销会重现卡顿，这是上一版已经踩过的坑。
+   三层全部静态，不新增常驻动画。
+   ========================================================================== */
+body.theme-dash::before {
+  background:
+    /* 静态光斑：左上翡翠、右下青碧，给网格一个明暗梯度（"被摄物"的层次） */
+    radial-gradient(1100px 620px at 12% 8%,  rgba(52, 211, 153, .06), transparent 62%),
+    radial-gradient(1000px 700px at 88% 92%, rgba(45, 212, 191, .05), transparent 64%),
+    /* 网格：52px 一格，仅作空间参考 */
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 52px 52px, 52px 52px;
+  opacity: .55;
+  box-shadow: var(--vignette);
+}
+/* 登录/注册/403 等独立页没有 body.theme-dash 时也要一致 */
+body::before { z-index: 0; }
+
+/* ==========================================================================
+   T1 · 主 CTA 对向扫光
+   --------------------------------------------------------------------------
+   来源：Buttons/0xnihilism_pretty-fireant-33.html（全库按钮技法密度第一）
+   原版两条光带 infinite 循环 —— 常驻动画，违反纪律，改为 hover 单次扫过。
+   原版 skew(-45deg) 过斜，工具界面显浮夸，降到 -20deg。
+   ========================================================================== */
+body.theme-dash .btn-glow {
+  position: relative;
+  overflow: hidden;          /* 裁掉扫出边界的光带 */
+  isolation: isolate;
+}
+body.theme-dash .btn-glow::before,
+body.theme-dash .btn-glow::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 55%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .20), transparent);
+  pointer-events: none;
+  z-index: -1;               /* 压在文字之下 */
+  opacity: 0;
+}
+body.theme-dash .btn-glow::before { left: -60%; }
+body.theme-dash .btn-glow::after  { left: 105%; }
+body.theme-dash .btn-glow:hover::before   { animation: cgSwipeR 1.05s ease-in-out; }
+body.theme-dash .btn-glow:hover::after    { animation: cgSwipeL 1.05s ease-in-out; }
+body.theme-dash .btn-glow:active { transform: translateY(1px); }
+@keyframes cgSwipeR {
+  0%   { opacity: 0; left: -60%; }
+  15%  { opacity: 1; }
+  100% { opacity: 0; left: 105%; transform: skewX(-20deg); }
+}
+@keyframes cgSwipeL {
+  0%   { opacity: 0; left: 105%; }
+  15%  { opacity: 1; }
+  100% { opacity: 0; left: -60%; transform: skewX(-20deg); }
+}
+/* 禁用态：不扫光，也不接受点击 */
+body.theme-dash .btn-glow:disabled { opacity: .45; cursor: not-allowed; }
+body.theme-dash .btn-glow:disabled::before,
+body.theme-dash .btn-glow:disabled::after { display: none; }
+
+/* ==========================================================================
+   T2 · 可交互指标卡 hover 三线光效
+   --------------------------------------------------------------------------
+   来源：Buttons/MuhammadHasann_tough-tiger-78.html
+   原版三件套：外溢光斑 + 顶部亮线 + 底部渐变光弧。
+   只给「可点击的指标卡」（a.stat-card），静态态与不可点击卡片完全一致 ——
+   可点击性必须由 hover 反馈传达，而不是常驻装饰。
+   ========================================================================== */
+body.theme-dash a.stat-card { position: relative; overflow: hidden; }
+body.theme-dash a.stat-card::before,
+body.theme-dash a.stat-card::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  height: 2px;
+  width: 0;
+  transform: translateX(-50%);
+  transition: width .42s var(--ease-glide);
+  pointer-events: none;
+}
+body.theme-dash a.stat-card::before {
+  top: 0;
+  background: var(--brand-grad);
+}
+body.theme-dash a.stat-card::after {
+  bottom: 0;
+  background: linear-gradient(90deg,
+      rgba(52, 211, 153, 0), rgba(52, 211, 153, .80), rgba(52, 211, 153, 0));
+  filter: drop-shadow(0 0 8px rgba(52, 211, 153, .40));
+}
+body.theme-dash a.stat-card:hover::before,
+body.theme-dash a.stat-card:hover::after { width: 100%; }
+body.theme-dash a.stat-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  background: var(--bg-panel-hover);
+}
+body.theme-dash a.stat-card:active { transform: translateY(1px); }
+
+/* ==========================================================================
+   T3 · 弹性开关（squash & stretch）
+   --------------------------------------------------------------------------
+   来源：Toggle-switches/JkHuger_itchy-turtle-45.html
+   精髓：滑块位移中途 width 被拉伸再收回，配合过冲缓动 —— 果冻挤压感。
+   这是纯 CSS 就能拿到的高级细节，成本几乎为零。
+   用真实 checkbox，保留 :checked 语义与键盘可达性。
+   ========================================================================== */
+body.theme-dash .cg-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 46px; height: 26px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-control);
+  cursor: pointer;
+  outline: none;
+  transition: background .28s var(--ease-glide), border-color .28s var(--ease-glide);
+  vertical-align: middle;
+}
+body.theme-dash .cg-switch::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 3px;
+  transform: translateY(-50%);
+  width: 20px; height: 20px;
+  border-radius: 999px;
+  background: var(--text-secondary);
+  animation: cgSwitchOff .34s var(--ease-spring) forwards;
+}
+body.theme-dash .cg-switch:checked {
+  background: var(--accent-1);
+  border-color: var(--accent-1);
+}
+body.theme-dash .cg-switch:checked::after {
+  background: var(--accent-1);
+  animation: cgSwitchOn .34s var(--ease-spring) forwards;
+}
+body.theme-dash .cg-switch:focus-visible {
+  outline: 2px solid var(--accent-1);
+  outline-offset: 2px;
+}
+body.theme-dash .cg-switch:disabled { opacity: .45; cursor: not-allowed; }
+@keyframes cgSwitchOn {
+  0%   { left: 3px;  width: 20px; }
+  50%  { left: 3px;  width: 30px; }   /* 挤压：起步先被拉长 */
+  100% { left: 23px; width: 20px; }
+}
+@keyframes cgSwitchOff {
+  0%   { left: 23px; width: 20px; }
+  50%  { left: 13px; width: 30px; }
+  100% { left: 3px;  width: 20px; }
+}
+
+/* ==========================================================================
+   T5 · 输入框聚焦下划线（中心向两侧展开）
+   --------------------------------------------------------------------------
+   来源：Inputs 类高频技法（underline-expand）
+   focus 才出现，静态态只有淡边框 —— 输入框的"可输入"提示不应常驻。
+   ========================================================================== */
+body.theme-dash .form-control-dark,
+body.theme-dash .form-select-dark { position: relative; }
+body.theme-dash .form-control-dark::after,
+body.theme-dash .form-select-dark::after {
+  content: '';
+  position: absolute;
+  left: 50%; bottom: -1px;
+  width: 0; height: 2px;
+  transform: translateX(-50%);
+  background: var(--brand-grad);
+  border-radius: 2px;
+  transition: width .32s var(--ease-glide);
+  pointer-events: none;
+}
+body.theme-dash .form-control-dark:focus::after,
+body.theme-dash .form-select-dark:focus::after { width: 100%; }
+body.theme-dash .form-control-dark:disabled::after,
+body.theme-dash .form-select-dark:disabled::after { display: none; }
+
+/* ==========================================================================
+   T6 · 骨架屏 shimmer
+   --------------------------------------------------------------------------
+   来源：loaders 类（718 个，94% 含 @keyframes）
+   在原有呼吸之上叠一层横向流光 —— 呼吸表示"活着"，流光表示"正在加载"。
+   仅加载态存在，数据到位即随元素一起移除，不构成常驻动画。
+   ========================================================================== */
+body.theme-dash .cg-skel i {
+  background-image: linear-gradient(90deg,
+      transparent 0%, rgba(255, 255, 255, .07) 50%, transparent 100%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: cgSkel var(--pulse) ease-in-out infinite,
+             cgShimmer 1.6s linear infinite;
+}
+@keyframes cgShimmer {
+  0%   { background-position: -100% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ==========================================================================
+   T7 · 统一 tooltip（data-cg-tip 驱动，纯 CSS）
+   --------------------------------------------------------------------------
+   来源：Tooltips/Javierrocadev_rude-seahorse-6.html
+   原版在气泡旁放了一个 blur(8px) 的彩色光斑 —— 过花，去掉；
+   改为顶部 1px 渐变亮线，与卡片标题、折叠条同一种语言。
+   有 aria-label 的元素不要再挂 data-cg-tip，避免读屏重复播报。
+   ========================================================================== */
+[data-cg-tip] { position: relative; }
+[data-cg-tip]::before,
+[data-cg-tip]::after {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s var(--ease-glide);
+  z-index: 60;
+}
+/* 气泡本体：用 ::after 承载文案 */
+[data-cg-tip]::after {
+  content: attr(data-cg-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 9px);
+  transform: translateX(-50%) translateY(4px);
+  background: rgba(15, 13, 30, .97);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  /* 允许换行并限宽：说明类文案常超过一行，nowrap 会横向溢出视口。
+     左对齐 —— 中文多行文本居中会出现参差的右边缘。 */
+  white-space: normal;
+  width: max-content;
+  max-width: 260px;
+  text-align: left;
+  box-shadow: var(--shadow-pop);
+}
+/* 顶部渐变亮线 —— 代替原版彩色光斑 */
+[data-cg-tip]::after {
+  border-top: 1px solid transparent;
+  background-image: linear-gradient(var(--bg-dropdown), var(--bg-dropdown)),
+                    var(--brand-grad);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+/* 尖角：旋转 45° 的小方块 */
+[data-cg-tip]::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 5px);
+  width: 7px; height: 7px;
+  transform: translateX(-50%) rotate(45deg) translateY(4px);
+  background: var(--bg-dropdown);
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+[data-cg-tip]:hover::before,
+[data-cg-tip]:hover::after,
+[data-cg-tip]:focus-visible::before,
+[data-cg-tip]:focus-visible::after { opacity: 1; }
+[data-cg-tip]:hover::after  { transform: translateX(-50%) translateY(0); }
+[data-cg-tip]:hover::before { transform: translateX(-50%) rotate(45deg) translateY(0); }
+
+/* 下方定位 */
+[data-cg-tip-pos="bottom"]::after {
+  bottom: auto; top: calc(100% + 9px);
+  transform: translateX(-50%) translateY(-4px);
+}
+[data-cg-tip-pos="bottom"]::before {
+  bottom: auto; top: calc(100% + 5px);
+  border: none;
+  border-left: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--border-subtle);
+}
+[data-cg-tip-pos="bottom"]:hover::after { transform: translateX(-50%) translateY(0); }

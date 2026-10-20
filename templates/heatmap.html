@@ -1,0 +1,832 @@
+{% extends "base.html" %}
+{% set page_title = "全球攻击地图 | DDoS 防护监控" %}
+{% set nav_active = "heatmap" %}
+
+{#
+  本页由 base.html 提供导航栏、身份下拉与公共脚本，此处只关注页面内容。
+
+  渲染方式：纯 Canvas 手绘平面世界地图（等距圆柱投影）。
+  与原来的 ECharts geo 方案相比：
+    · 可交互：悬停国家/城市显示中文名与实时动态，点击城市聚焦关联链路
+    · 分色克制：整屏只有「暗青 + 红」两个色相，红色只用于攻击，位置一眼可辨
+    · 无 ECharts 依赖，边界数据本地化为静态文件
+#}
+
+{% block head_extra %}
+  <script src="/static/vendor/socket.io.min.js"></script>
+  <script src="/static/vendor/world-land-grid.js"></script>
+  <script src="/static/vendor/world-boundaries.js"></script>
+  <script src="/static/vendor/country-cn-names.js"></script>
+{% endblock %}
+
+{% block page_css %}
+  <style>
+  /* ===================== 页面骨架 ===================== */
+  .geo-wrap { display: grid; grid-template-columns: minmax(0,1fr) 296px; gap: 14px; }
+  @media (max-width: 1100px) { .geo-wrap { grid-template-columns: minmax(0,1fr); } }
+
+  .map-card { position: relative; min-height: 560px; display: flex; flex-direction: column; }
+  .map-stage { position: relative; flex: 1; min-height: 500px; overflow: hidden; }
+  #geoMap { position: absolute; inset: 0; display: block; width: 100%; height: 100%;
+            cursor: grab; }
+
+  /* 左上角读图说明（不遮地图主体） */
+  .map-hud { position: absolute; left: 12px; top: 10px; z-index: 6; pointer-events: none;
+             font-family: var(--font-mono); font-size: 10px; line-height: 1.85;
+             color: var(--text-muted); letter-spacing: .04em; }
+  .map-hud b { color: var(--accent-blue); font-weight: 600; }
+  .map-hud .rd { color: var(--danger-text); }
+  .map-hud .yl { color: var(--accent-orange); }
+
+  /* 悬停提示 */
+  .geo-tip { position: absolute; z-index: 20; min-width: 208px; max-width: 296px;
+    background: rgba(10,9,22,.96); border: 1px solid var(--border-subtle);
+    border-radius: 7px; padding: 10px 12px; pointer-events: none; opacity: 0;
+    transform: translateY(4px); transition: opacity .12s, transform .12s;
+    box-shadow: 0 10px 34px rgba(0,0,0,.72); }
+  .geo-tip.on { opacity: 1; transform: translateY(0); }
+  .geo-tip .h { display: flex; align-items: baseline; gap: 7px; margin-bottom: 7px;
+    padding-bottom: 7px; border-bottom: 1px solid var(--border-subtle); }
+  .geo-tip .h .cn { font-size: 14px; font-weight: 700; color: #fff; }
+  .geo-tip .h .en { font-size: 9.5px; color: var(--text-muted);
+    font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .geo-tip .h .tag { margin-left: auto; font-size: 9.5px; font-family: var(--font-mono);
+    padding: 1px 6px; border-radius: 3px; flex: 0 0 auto; }
+  .geo-tip .h .tag.src { background: rgba(185,28,28,.18); color: var(--danger-text);
+    border: 1px solid rgba(185,28,28,.42); }
+  .geo-tip .h .tag.dst { background: rgba(180,83,9,.16); color: var(--accent-orange);
+    border: 1px solid rgba(180,83,9,.38); }
+  .geo-tip .h .tag.neu { background: rgba(79,70,229,.14); color: var(--accent-1);
+    border: 1px solid rgba(79,70,229,.34); }
+  .geo-tip .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px;
+    font-size: 11px; font-family: var(--font-mono); }
+  .geo-tip .kv .k { color: var(--text-muted); white-space: nowrap; }
+  .geo-tip .kv .v { text-align: right; color: var(--text-primary);
+    font-variant-numeric: tabular-nums; }
+  .geo-tip .kv .v.r { color: var(--danger-text); } .geo-tip .kv .v.y { color: var(--accent-orange); }
+  .geo-tip .kv .v.g { color: var(--accent-green); } .geo-tip .kv .v.c { color: var(--accent-1); }
+  .geo-tip .live { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border-subtle);
+    font-size: 10.5px; font-family: var(--font-mono); color: var(--text-secondary);
+    line-height: 1.65; }
+  .geo-tip .chip { display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 9.5px; margin: 0 4px 3px 0; background: rgba(79,70,229,.12);
+    color: var(--text-secondary); border: 1px solid var(--border-subtle); }
+
+  /* 右侧攻击来源列表 */
+  .src-list { max-height: 560px; overflow-y: auto; }
+  .src-row { padding: 9px 12px; border-bottom: 1px solid var(--border-subtle);
+    font-size: .8rem; transition: background .14s; }
+  .src-row:hover { background: rgba(79,70,229,.10); }
+  .src-row .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .src-row .nm { color: var(--accent-blue); font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .src-row .bw { color: var(--danger-text); font-family: var(--font-mono); flex: 0 0 auto; }
+  .src-row .sub { color: var(--text-muted); font-size: .7rem; margin-top: 3px;
+    font-family: var(--font-mono); }
+  .src-row .bar { height: 3px; border-radius: 2px; margin-top: 6px;
+    background: linear-gradient(90deg, rgba(79,70,229,.85), rgba(185,28,28,.85)); }
+
+  /* 防护节点图例 */
+  .node-list { font-family: var(--font-mono); font-size: .72rem; }
+  .node-list .nd { display: flex; justify-content: space-between; padding: 4px 0;
+    border-bottom: 1px solid var(--border-subtle); }
+  .node-list .nd:last-child { border-bottom: none; }
+  .node-list .cap { color: var(--accent-green); }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="main-content page-enter">
+
+    <!-- ===== 顶部统计卡片 ===== -->
+    <div class="bento">
+      <div class="stat-card info cg-rv d1"><div class="stat-value" id="statCountries">0</div>
+        <div class="stat-label">攻击来源国家</div>
+      </div>
+      <div class="stat-card danger cg-rv d1"><div class="stat-value" id="statSources">0</div>
+        <div class="stat-label">攻击来源位置</div>
+      </div>
+      <div class="stat-card warning cg-rv d1"><div class="stat-value" id="statBandwidth">0</div>
+        <div class="stat-label">总攻击流量 Mbps</div>
+      </div>
+      <div class="stat-card purple cg-rv d1"><div class="stat-value" id="statNodes">0</div>
+        <div class="stat-label">防护节点</div>
+      </div>
+    </div>
+
+    <!-- ===== 地图 + 右侧列表 ===== -->
+    <div class="geo-wrap">
+      <div class="card-dark map-card cg-rv d2">
+        <div class="card-header-dark">
+          <span>全球攻击地图
+
+</span>
+          <div>
+            <small class="text-muted me-2">数据刷新: <span id="updateTime">--</span></small>
+            <button class="btn btn-dark btn-sm me-1" onclick="MAP && MAP.resetView()" title="恢复初始视角（也可在地图上双击）">复位视角</button>
+            <button class="btn btn-dark btn-sm" onclick="refreshMap()">刷新</button>
+          </div>
+        </div>
+        <div class="map-stage">
+          <canvas id="geoMap"></canvas>
+          <div class="map-hud">
+            <div>PROJECTION <b>等距圆柱</b></div>
+            <div>ARC <span class="rd">红色 = 攻击链路</span> / <span class="yl">黄色 = 中低危</span></div>
+            <div>滚轮缩放 · 拖拽平移 · 双击复位</div>
+            <div>悬停国家·城市·链路查看详情 · 点击城市聚焦</div>
+          </div>
+          <div class="geo-tip" id="geoTip"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card-dark cg-rv d2 mb-3">
+          <div class="card-header-dark"><span>攻击来源 TOP</span></div>
+          <div class="card-body-dark p-0"><div class="src-list" id="srcList"></div></div>
+        </div>
+        <div class="card-dark cg-rv d2">
+          <div class="card-header-dark"><span>防护节点</span></div>
+          <div class="card-body-dark"><div class="node-list" id="nodeList"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 数据来源与合规边界 —— 折叠至页脚，默认收起。
+         本页全部数据来自内存沙箱推演，统一说明一次即可，
+         不再逐卡片重复「沙箱模拟」徽章。
+         只声明本页真实存在的来源，不写"实时采集"这类本页没有的数据。 -->
+    <details class="cg-src-fold">
+      <summary>数据来源与合规边界</summary>
+      <div class="dl-body">
+        <span class="dl-item"><span class="dl-dot sim"></span>沙箱模拟：攻击源地理位置与流量态势（内存推演，不产生真实报文）</span>
+        <span class="dl-item"><span class="dl-dot sim"></span>地理坐标取自内置映射表随机取值，非真实 GeoIP 查询</span>
+      </div>
+    </details>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+(function () {
+  'use strict';
+
+  // ==========================================================================
+  //  数据层
+  // ==========================================================================
+  var geoData = [];          // 攻击来源：{lat, lng, country, city, count, bandwidth, types}
+  var nodes = [];            // 防护节点：{name, lat, lng, capacity}
+  var CN = window.COUNTRY_CN || {};
+
+  // 国家代码 -> 中文名（GEO_IP_MAP 里的 country 是两字母代码）
+  var CC_CN = {
+    US:'美国', CN:'中国', RU:'俄罗斯', BR:'巴西', IN:'印度', DE:'德国',
+    GB:'英国', FR:'法国', JP:'日本', KR:'韩国', NL:'荷兰', UA:'乌克兰',
+    VN:'越南', ID:'印度尼西亚', TR:'土耳其', SG:'新加坡', HK:'中国香港',
+    TW:'中国台湾', CA:'加拿大', AU:'澳大利亚', IT:'意大利', ES:'西班牙',
+    PL:'波兰', SE:'瑞典', CH:'瑞士', ZA:'南非', MX:'墨西哥', AR:'阿根廷',
+    TH:'泰国', MY:'马来西亚', PH:'菲律宾', PK:'巴基斯坦', IR:'伊朗',
+    SA:'沙特阿拉伯', AE:'阿联酋', EG:'埃及', NG:'尼日利亚', RO:'罗马尼亚'
+  };
+  function ccName(cc) { return CC_CN[cc] || cc || '未知'; }
+
+  // ==========================================================================
+  //  Canvas 地图引擎（等距圆柱投影）
+  // ==========================================================================
+  var MAP = (function () {
+    var G = window.FLAT_GRID;              // {step, rows, cols, data} 由 /static 提供
+    var FEATURES = window.__WORLD_FEATURES || [];   // 国家边界，用于悬停命中
+    var cv = document.getElementById('geoMap');
+    var g, W = 0, H = 0, scale = 1, offX = 0, offY = 0;
+
+    // ---- 解析十六进制位图为"按行连续段"，便于批量画矩形 ----
+    var cells = [];
+    if (G) {
+      G.data.forEach(function (pair) {
+        var r = pair[0], hex = pair[1], c0 = -1;
+        for (var i = 0; i < hex.length * 4; i++) {
+          var nib = parseInt(hex.charAt(i >> 2), 16);
+          var bit = (nib >> (3 - (i & 3))) & 1;
+          if (bit && c0 < 0) c0 = i;
+          else if (!bit && c0 >= 0) { cells.push([r, c0, i - 1]); c0 = -1; }
+        }
+        if (c0 >= 0) cells.push([r, c0, hex.length * 4 - 1]);
+      });
+    }
+
+    // ---- 国家边界预处理：包围盒 + 只保留外环 ----
+    var COUNTRIES = [];
+    FEATURES.forEach(function (f) {
+      var nm = (f.properties && f.properties.name) || '';
+      if (!nm) return;
+      var geom = f.geometry || {}, polys = [];
+      if (geom.type === 'Polygon') polys = [geom.coordinates];
+      else if (geom.type === 'MultiPolygon') polys = geom.coordinates;
+      if (!polys.length) return;
+      var x0 = 180, y0 = 90, x1 = -180, y1 = -90;
+      polys.forEach(function (poly) {
+        var ring = poly[0] || poly;
+        ring.forEach(function (pt) {
+          var lo = pt[0], la = pt[1];
+          if (lo < x0) x0 = lo; if (lo > x1) x1 = lo;
+          if (la < y0) y0 = la; if (la > y1) y1 = la;
+        });
+      });
+      COUNTRIES.push({ name: nm, cn: CN[nm] || nm, bbox: [x0, y0, x1, y1],
+                       rings: polys.map(function (p) { return p[0] || p; }) });
+    });
+
+    // ---- 射线法 ----
+    function inRing(lon, lat, ring) {
+      var inside = false;
+      for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        var xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+        if (((yi > lat) !== (yj > lat)) &&
+            (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) inside = !inside;
+      }
+      return inside;
+    }
+    function hitCountry(lon, lat) {
+      for (var i = 0; i < COUNTRIES.length; i++) {
+        var c = COUNTRIES[i], b = c.bbox;
+        if (lon < b[0] || lon > b[2] || lat < b[1] || lat > b[3]) continue;
+        for (var r = 0; r < c.rings.length; r++) if (inRing(lon, lat, c.rings[r])) return c;
+      }
+      return null;
+    }
+
+    function resize() {
+      var w = cv.clientWidth, h = cv.clientHeight;
+      if (w < 2 || h < 2) return false;
+      var d = window.devicePixelRatio || 1;
+      cv.width = Math.max(1, Math.round(w * d));
+      cv.height = Math.max(1, Math.round(h * d));
+      g = cv.getContext('2d');
+      g.setTransform(d, 0, 0, d, 0, 0);
+      W = w; H = h;
+      fitView();
+      return true;
+    }
+    /* 复位视角：等距圆柱是 2:1，用 fill 方式铺满容器（会裁掉少量极地） */
+    function fitView() {
+      scale = G ? Math.max(W / G.cols, H / G.rows) : 1;
+      offX = (W - (G ? G.cols * scale : 0)) / 2;
+      offY = (H - (G ? G.rows * scale : 0)) / 2;
+    }
+    function fitScale() {
+      return G ? Math.max(W / G.cols, H / G.rows) : 1;
+    }
+    /* 缩放：以光标为锚点，限制在 [复位比例, 12×] 之间 */
+    function zoomAt(f, cx, cy) {
+      var ns = Math.max(fitScale(), Math.min(12, scale * f));
+      var k = ns / scale;
+      offX = cx - (cx - offX) * k;
+      offY = cy - (cy - offY) * k;
+      scale = ns;
+      clampPan();
+    }
+    function panBy(dx, dy) {
+      offX += dx; offY += dy;
+      clampPan();
+    }
+    /* 平移边界：至少保留地图的 1/4 在视口内，防止把地图拖飞 */
+    function clampPan() {
+      if (!G) return;
+      var mW = G.cols * scale, mH = G.rows * scale;
+      offX = Math.min(Math.max(offX, Math.min(0, W - mW) - W * 0.6), W * 0.6);
+      offY = Math.min(Math.max(offY, Math.min(0, H - mH) - H * 0.6), H * 0.6);
+    }
+    function resetView() {
+      fitView();
+    }
+    function px(lon, lat) {
+      return { x: offX + (lon + 180) / G.step * scale,
+               y: offY + (90 - lat) / G.step * scale };
+    }
+    function unproject(x, y) {
+      if (!scale || !G) return null;
+      return { lon: (x - offX) / scale * G.step - 180,
+               lat: 90 - (y - offY) / scale * G.step };
+    }
+
+    // 弧线：二次贝塞尔并抬高中点，形成参考图里那种向外鼓起的弧
+    function arcPoint(A, B, t) {
+      var p1 = px(A.lng, A.lat), p2 = px(B.lng, B.lat);
+      var dx = p2.x - p1.x, dy = p2.y - p1.y;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var lift = Math.min(dist * 0.30, Math.min(W, H) * 0.42);
+      var mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+      var nx = -dy / dist, ny = dx / dist;
+      if (ny > 0) { nx = -nx; ny = -ny; }        // 统一朝上鼓
+      var cx = mx + nx * lift, cy = my + ny * lift;
+      var u = 1 - t;
+      return { x: u * u * p1.x + 2 * u * t * cx + t * t * p2.x,
+               y: u * u * p1.y + 2 * u * t * cy + t * t * p2.y };
+    }
+
+    // ---- 交互状态 ----
+    var HOVER = { city: null, arc: null, country: null };
+    var FOCUS = null;
+
+    // ---- 逐帧渲染 ----
+    var arcs = [];          // {from, to, hot, t, speed, key}
+    function setData(list, nodeList) {
+      nodes = nodeList || [];
+      arcs = [];
+      // 每个攻击来源连到"最近的防护节点"
+      list.slice(0, 26).forEach(function (a, i) {
+        var best = null, bestD = Infinity;
+        nodes.forEach(function (n) {
+          var dd = Math.pow(a.lng - n.lng, 2) + Math.pow(a.lat - n.lat, 2);
+          if (dd < bestD) { bestD = dd; best = n; }
+        });
+        if (!best) return;
+        arcs.push({
+          from: a, to: best,
+          hot: (a.bandwidth || 0) > 500,
+          t: (i * 0.137) % 1,
+          speed: 0.09 + ((i * 37) % 100) / 620,
+          key: (a.country || '') + (a.city || '') + i
+        });
+      });
+    }
+
+    var last = 0;
+    function frame(now) {
+      var dt = last ? Math.min(60, now - last) : 16; last = now;
+      if (!W || !H) { resize(); requestAnimationFrame(frame); return; }
+      if (g) {
+        if (cv.clientWidth !== W || cv.clientHeight !== H) resize();
+        g.clearRect(0, 0, W, H);
+
+        // ---- 陆地：按"行内连续段"批量画矩形 ----
+        // 关键：**不要**再给每个矩形描边。
+        // 3200 个矩形各描一次边时，半透明描边会层层叠加，
+        // 在整片陆地上形成一层"薄雾"，把地图冲淡、并盖住攻击弧线
+        // （已实测：加上描边后弧线几乎不可见）。
+        g.fillStyle = CG.rgba(CG.c1Rgb, .10);
+        for (var i = 0; i < cells.length; i++) {
+          var s = cells[i];
+          g.fillRect(offX + s[1] * scale, offY + s[0] * scale,
+                     (s[2] - s[1] + 1) * scale + 0.6, scale + 0.6);
+        }
+
+        // ---- 经纬网 ----
+        g.strokeStyle = 'rgba(79,70,229,.10)'; g.lineWidth = 1;
+        for (var lo = -180; lo <= 180; lo += 30) {
+          var p = px(lo, 0);
+          g.beginPath(); g.moveTo(p.x, 0); g.lineTo(p.x, H); g.stroke();
+        }
+        for (var la = -60; la <= 60; la += 30) {
+          var p2 = px(0, la);
+          g.beginPath(); g.moveTo(0, p2.y); g.lineTo(W, p2.y); g.stroke();
+        }
+
+        // ---- 攻击弧线 ----
+        var focus = FOCUS || HOVER.city;
+        arcs.forEach(function (arc) {
+          var related = !focus || arc.from === focus || arc.to === focus;
+          var isHovered = HOVER.arc && HOVER.arc.arc === arc;
+          var dim = related ? 1 : 0.13;
+          if (isHovered) dim = 1.25;
+          var rgb = arc.hot ? '255,45,85' : '255,176,32';
+
+          g.beginPath();
+          for (var k = 0; k <= 46; k++) {
+            var pt = arcPoint(arc.from, arc.to, k / 46);
+            if (k === 0) g.moveTo(pt.x, pt.y); else g.lineTo(pt.x, pt.y);
+          }
+          g.strokeStyle = 'rgba(' + rgb + ',' + (0.22 * dim) + ')';
+          g.lineWidth = (arc.hot ? 1.6 : 1.2) * (isHovered ? 1.9 : 1);
+          g.stroke();
+
+          // 流动亮段
+          arc.t = (arc.t + dt * 0.00042 * arc.speed * 10) % 1;
+          var TAIL = 0.30, STEPS = 22;
+          for (var q = 0; q < STEPS; q++) {
+            var t1 = arc.t - TAIL * (1 - q / STEPS);
+            var t2 = arc.t - TAIL * (1 - (q + 1) / STEPS);
+            if (t1 < 0 || t2 < 0 || t1 > 1) continue;
+            var a1 = arcPoint(arc.from, arc.to, Math.max(0, Math.min(1, t1)));
+            var a2 = arcPoint(arc.from, arc.to, Math.max(0, Math.min(1, t2)));
+            var k2 = q / STEPS, alpha = Math.pow(k2, 1.6);
+            g.beginPath(); g.moveTo(a1.x, a1.y); g.lineTo(a2.x, a2.y);
+            g.strokeStyle = 'rgba(' + rgb + ',' + (alpha * 0.95 * dim) + ')';
+            g.lineWidth = (1 + k2 * 2.2) * (isHovered ? 1.6 : 1);
+            g.lineCap = 'round'; g.stroke();
+          }
+          // 弹头
+          var head = arcPoint(arc.from, arc.to, Math.min(0.999, arc.t));
+          var hg = Math.min(1, dim);
+          var gr = g.createRadialGradient(head.x, head.y, 0, head.x, head.y, 9);
+          gr.addColorStop(0, 'rgba(' + rgb + ',' + (0.9 * hg) + ')');
+          gr.addColorStop(1, 'rgba(' + rgb + ',0)');
+          g.fillStyle = gr; g.beginPath(); g.arc(head.x, head.y, 9, 0, 6.2832); g.fill();
+          // 来源扩散环 + 目标点
+          var sp = px(arc.from.lng, arc.from.lat), ep = px(arc.to.lng, arc.to.lat);
+          var pulse = (now / 1400) % 1;
+          g.beginPath(); g.arc(sp.x, sp.y, 2 + pulse * 9, 0, 6.2832);
+          g.strokeStyle = 'rgba(255,255,255,' + ((1 - pulse) * 0.30 * hg) + ')';
+          g.lineWidth = 1.2; g.stroke();
+          g.beginPath(); g.arc(ep.x, ep.y, 2.6, 0, 6.2832);
+          g.fillStyle = 'rgba(79,70,229,' + hg + ')'; g.fill();
+        });
+
+        // ---- 攻击来源点（按带宽分色）----
+        g.font = '600 10px ' + getComputedStyle(document.body)
+          .getPropertyValue('--font-sans');
+        g.textBaseline = 'middle';
+        var cityDim = focus ? 0.28 : 1;
+        if (HOVER.city) cityDim = 1;
+        // 标签去重：同一城市可能因坐标抖动出现多个来源点，
+        // 若不去重会看到 "Montreal CA" 并排出现两次（已实测到）。
+        var seenLabels = {};
+        geoData.slice(0, 26).forEach(function (a) {
+          var p = px(a.lng, a.lat);
+          if (p.x < -60 || p.x > W + 60 || p.y < -30 || p.y > H + 30) return;
+          var isSelf = (a === focus) || (HOVER.city === a);
+          var al = isSelf ? 1 : cityDim;
+          var bw = a.bandwidth || 0;
+          var col = bw > 1500 ? '185,28,28' : (bw > 500 ? '180,83,9' : '79,70,229');
+          var rr = Math.min(4.6, Math.sqrt(bw) / 12 + 1.8);
+          // 光晕半径收到 rr*2.6、透明度 0.42 —— 26 个来源点叠在一起时，
+          // 过大的光晕会把地图糊成一片，反而看不清弧线走向。
+          var grd = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr * 2.6);
+          grd.addColorStop(0, 'rgba(' + col + ',' + (0.42 * al) + ')');
+          grd.addColorStop(1, 'rgba(' + col + ',0)');
+          g.fillStyle = grd; g.beginPath(); g.arc(p.x, p.y, rr * 2.6, 0, 6.2832); g.fill();
+          g.beginPath(); g.arc(p.x, p.y, rr * 0.8, 0, 6.2832);
+          g.fillStyle = 'rgba(255,255,255,' + (0.95 * al) + ')'; g.fill();
+          // 标签
+          var label = (a.city || '') + ' ' + (a.country || '');
+          var dup = seenLabels[label] === 1;
+          seenLabels[label] = 1;
+          if (!dup && (isSelf || al > 0.5)) {
+            var tw = g.measureText(label).width;
+            g.fillStyle = 'rgba(10,9,22,' + (0.86 * al) + ')';
+            g.fillRect(p.x - tw / 2 - 5, p.y - 21, tw + 10, 15);
+            g.strokeStyle = isSelf ? 'rgba(79,70,229,.95)'
+                                   : 'rgba(79,70,229,' + (0.26 * al) + ')';
+            g.lineWidth = isSelf ? 1.5 : 1;
+            g.strokeRect(p.x - tw / 2 - 5.5, p.y - 21.5, tw + 11, 16);
+            g.fillStyle = isSelf ? '#fff' : 'rgba(238,236,248,' + al + ')';
+            g.textAlign = 'center';
+            g.fillText(label, p.x, p.y - 13);
+          }
+          if (isSelf) {
+            var ph = (now / 900) % 1;
+            g.beginPath(); g.arc(p.x, p.y, 6 + ph * 11, 0, 6.2832);
+            g.strokeStyle = 'rgba(79,70,229,' + ((1 - ph) * 0.8) + ')';
+            g.lineWidth = 1.6; g.stroke();
+          }
+        });
+
+        // ---- 防护节点（青色方块 + 名称）----
+        nodes.forEach(function (n) {
+          var p = px(n.lng, n.lat);
+          if (p.x < -40 || p.x > W + 40 || p.y < -20 || p.y > H + 20) return;
+          g.save();
+          g.translate(p.x, p.y);
+          g.rotate(Math.PI / 4);
+          g.fillStyle = 'rgba(79,70,229,.85)';
+          g.fillRect(-3.2, -3.2, 6.4, 6.4);
+          g.strokeStyle = 'rgba(79,70,229,.45)';
+          g.lineWidth = 1; g.strokeRect(-5.4, -5.4, 10.8, 10.8);
+          g.restore();
+        });
+      }
+      requestAnimationFrame(frame);
+    }
+
+    // ---- 交互事件 ----
+    function hitCity(x, y) {
+      var best = null, bestD = 15 * 15;
+      geoData.slice(0, 26).forEach(function (a) {
+        var p = px(a.lng, a.lat);
+        var dx = p.x - x, dy = p.y - y, d2 = dx * dx + dy * dy;
+        if (d2 < bestD) { bestD = d2; best = a; }
+      });
+      return best;
+    }
+    function hitArc(x, y) {
+      var best = null, bestD = 10 * 10;
+      arcs.forEach(function (a) {
+        for (var k = 0; k <= 30; k++) {
+          var p = arcPoint(a.from, a.to, k / 30);
+          var dx = p.x - x, dy = p.y - y, d2 = dx * dx + dy * dy;
+          if (d2 < bestD) { bestD = d2; best = { arc: a, from: a.from, to: a.to }; }
+        }
+      });
+      return best;
+    }
+
+    resize();
+    window.addEventListener('resize', resize);
+    if (window.ResizeObserver) { try { new ResizeObserver(resize).observe(cv); } catch (e) {} }
+    requestAnimationFrame(frame);
+
+    return {
+      setData: setData,
+      hitCity: hitCity, hitArc: hitArc, hitCountry: hitCountry,
+      unproject: unproject, px: px,
+      setHover: function (h) {
+        HOVER.city = h ? h.city : null;
+        HOVER.arc = h ? h.arc : null;
+        HOVER.country = h ? h.country : null;
+      },
+      focus: function (c) { FOCUS = c || null; },
+      getFocus: function () { return FOCUS; },
+      zoomAt: zoomAt, panBy: panBy, resetView: resetView,
+      size: function () { return { W: W, H: H, scale: scale, offX: offX, offY: offY }; }
+    };
+  })();
+  window.MAP = MAP;   // 测试钩子：CDP 验证缩放/平移用（同 __cgTestAlert 惯例）
+
+  // ==========================================================================
+  //  悬停提示
+  // ==========================================================================
+  var tip = document.getElementById('geoTip');
+
+  function positionTip(x, y) {
+    var w = tip.offsetWidth || 240, h = tip.offsetHeight || 160;
+    var stage = document.querySelector('.map-stage');
+    var px2 = x + 16, py2 = y + 16;
+    if (px2 + w > stage.clientWidth - 8) px2 = x - w - 16;
+    if (py2 + h > stage.clientHeight - 8) py2 = y - h - 16;
+    tip.style.left = Math.max(6, px2) + 'px';
+    tip.style.top = Math.max(6, py2) + 'px';
+  }
+  function showTip(html, x, y) {
+    tip.className = 'geo-tip on';
+    tip.innerHTML = html;
+    positionTip(x, y);
+  }
+  function hideTip() { tip.className = 'geo-tip'; }
+
+  function tipCountry(c, x, y) {
+    // 该国相关的攻击来源（按国家代码匹配，取不到则按中文名匹配）
+    var related = geoData.filter(function (a) {
+      return (a.country === c.name) || (ccName(a.country) === c.cn);
+    });
+    var atk = related.reduce(function (s, a) { return s + (a.count || 0); }, 0);
+    var bw = related.reduce(function (s, a) { return s + (a.bandwidth || 0); }, 0);
+    var kinds = {}, list = [];
+    related.forEach(function (a) { (a.types || []).forEach(function (t) { kinds[t] = 1; }); });
+    list = Object.keys(kinds);
+    var role = related.length ? 'src' : 'neu';
+    var roleTxt = related.length ? '攻击来源国' : '暂无活动';
+    var chips = list.length
+      ? list.slice(0, 4).map(function (t) { return '<span class="chip">' + t + '</span>'; }).join('')
+      : '<span style="color:var(--text-muted);font-size:10.5px">该国当前无攻击记录</span>';
+    var now = new Date();
+    var pd = String(now.getHours()).padStart(2, '0') + ':' +
+             String(now.getMinutes()).padStart(2, '0') + ':' +
+             String(now.getSeconds()).padStart(2, '0');
+    showTip(
+      '<div class="h"><span class="cn">' + c.cn + '</span>' +
+        '<span class="en">' + c.name + '</span>' +
+        '<span class="tag ' + role + '">' + roleTxt + '</span></div>' +
+      '<div class="kv">' +
+        '<span class="k">攻击来源点</span><span class="v">' + related.length + ' 个</span>' +
+        '<span class="k">攻击次数</span><span class="v r">' + atk + '</span>' +
+        '<span class="k">累计流量</span><span class="v c">' + bw.toFixed(0) + ' Mbps</span>' +
+      '</div>' +
+      '<div class="live"><div style="color:var(--text-muted);font-size:9.5px;' +
+        'letter-spacing:.08em;margin-bottom:5px">正在发生的攻击类型</div>' + chips +
+        '<div style="margin-top:6px;color:var(--accent-green)">● ' + pd + ' 实时采集中</div></div>',
+      x, y);
+  }
+
+  function tipCity(a, x, y) {
+    var bw = a.bandwidth || 0;
+    var lv = bw > 1500 ? ['高危', 'src'] : (bw > 500 ? ['中危', 'dst'] : ['低危', 'neu']);
+    var kinds = (a.types || []).map(function (t) {
+      return '<span class="chip">' + t + '</span>';
+    }).join('') || '<span style="color:var(--text-muted)">-</span>';
+    showTip(
+      '<div class="h"><span class="cn">' + (a.city || '未知') + '</span>' +
+        '<span class="en">' + ccName(a.country) + ' · ' + (a.country || '') + '</span>' +
+        '<span class="tag ' + lv[1] + '">' + lv[0] + '</span></div>' +
+      '<div class="kv">' +
+        '<span class="k">经纬度</span><span class="v">' + a.lat.toFixed(2) + '°, ' +
+          a.lng.toFixed(2) + '°</span>' +
+        '<span class="k">攻击次数</span><span class="v r">' + (a.count || 0) + '</span>' +
+        '<span class="k">攻击流量</span><span class="v c">' + bw.toFixed(1) + ' Mbps</span>' +
+      '</div>' +
+      '<div class="live"><div style="color:var(--text-muted);font-size:9.5px;' +
+        'letter-spacing:.08em;margin-bottom:5px">攻击类型</div>' + kinds +
+        '<div style="margin-top:6px;color:var(--accent-1)">● 点击可聚焦该来源的链路</div></div>',
+      x, y);
+  }
+
+  function tipArc(hit, x, y) {
+    var a = hit.arc, f = hit.from, t = hit.to;
+    showTip(
+      '<div class="h"><span class="cn">' + (f.city || '') + ' → ' + t.name + '</span>' +
+        '<span class="tag ' + (a.hot ? 'src' : 'dst') + '">' +
+        (a.hot ? '高危' : '中低危') + '</span></div>' +
+      '<div class="kv">' +
+        '<span class="k">来源</span><span class="v">' + ccName(f.country) + ' · ' +
+          (f.city || '') + '</span>' +
+        '<span class="k">清洗节点</span><span class="v">' + t.name + '</span>' +
+        '<span class="k">攻击流量</span><span class="v c">' + (f.bandwidth || 0).toFixed(1) +
+          ' Mbps</span>' +
+        '<span class="k">攻击次数</span><span class="v r">' + (f.count || 0) + '</span>' +
+      '</div>' +
+      '<div class="live"><div style="color:var(--text-muted);font-size:9.5px;' +
+        'letter-spacing:.08em;margin-bottom:5px">处置</div>' +
+        '<div style="color:var(--accent-green)">● 已牵引至 ' + t.name + '（' + (t.capacity || '--') +
+        '）</div></div>',
+      x, y);
+  }
+
+  // ==========================================================================
+  //  鼠标交互
+  //    · 悬停：国家/城市/链路提示（原有）
+  //    · 滚轮缩放（以光标为锚点）+ 拖拽平移 + 双击复位（本版新增）
+  //    · 点击城市仍为聚焦/取消聚焦，拖拽超过阈值后不触发点击
+  // ==========================================================================
+  (function bindMap() {
+    var cv = document.getElementById('geoMap');
+    var cur = { key: '' };
+    var drag = null;          // 拖拽会话 {x, y, moved}
+    var draggedAt = 0;        // 最近一次"有效拖拽"结束时间（用于吞掉随后的 click）
+
+    cv.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      var box = cv.getBoundingClientRect();
+      MAP.zoomAt(e.deltaY < 0 ? 1.18 : 1 / 1.18,
+                 e.clientX - box.left, e.clientY - box.top);
+    }, { passive: false });
+
+    cv.addEventListener('mousedown', function (e) {
+      drag = { x: e.clientX, y: e.clientY, moved: 0 };
+    });
+    window.addEventListener('mouseup', function () {
+      if (!drag) return;
+      if (drag.moved > 6) draggedAt = Date.now();
+      drag = null;
+      cv.style.cursor = 'grab';
+    });
+
+    cv.addEventListener('mousemove', function (e) {
+      var box = cv.getBoundingClientRect();
+      var x = e.clientX - box.left, y = e.clientY - box.top;
+
+      // ---- 拖拽平移优先 ----
+      if (drag) {
+        var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+        drag.moved += Math.abs(dx) + Math.abs(dy);
+        drag.x = e.clientX; drag.y = e.clientY;
+        if (drag.moved > 6) {
+          MAP.panBy(dx, dy);
+          hideTip(); MAP.setHover(null);
+          cv.style.cursor = 'grabbing';
+          return;
+        }
+      }
+
+      var city = MAP.hitCity(x, y);
+      if (city) {
+        var k1 = 'c' + (city.city || '') + city.lat;
+        if (cur.key !== k1) cur.key = k1;
+        tipCity(city, x, y);
+        MAP.setHover({ city: city, arc: null, country: null });
+        cv.style.cursor = 'pointer';
+        return;
+      }
+      var arc = MAP.hitArc(x, y);
+      if (arc) {
+        tipArc(arc, x, y);
+        MAP.setHover({ city: null, arc: arc, country: null });
+        cv.style.cursor = 'pointer';
+        return;
+      }
+      var ll = MAP.unproject(x, y);
+      var c = (ll && ll.lon >= -180 && ll.lon <= 180 && ll.lat >= -90 && ll.lat <= 90)
+        ? MAP.hitCountry(ll.lon, ll.lat) : null;
+      if (c) {
+        tipCountry(c, x, y);
+        MAP.setHover({ city: null, arc: null, country: c });
+        cv.style.cursor = 'default';
+        return;
+      }
+      if (cur.key) { cur.key = ''; hideTip(); MAP.setHover(null); }
+      cv.style.cursor = 'grab';
+    });
+
+    cv.addEventListener('mouseleave', function () {
+      cur.key = ''; hideTip(); MAP.setHover(null);
+    });
+
+    cv.addEventListener('dblclick', function (e) {
+      e.preventDefault();
+      MAP.resetView();
+    });
+
+    cv.addEventListener('click', function (e) {
+      // 拖拽刚结束的 400ms 内吞掉 click，避免"拖完误聚焦"
+      if (Date.now() - draggedAt < 400) return;
+      var box = cv.getBoundingClientRect();
+      var c = MAP.hitCity(e.clientX - box.left, e.clientY - box.top);
+      MAP.focus(MAP.getFocus() === c ? null : c);
+    });
+  })();
+
+  // ==========================================================================
+  //  数据获取与列表渲染
+  // ==========================================================================
+  function pct(v, max) { return Math.max(4, Math.round((v / (max || 1)) * 100)); }
+
+  function renderLists() {
+    var list = document.getElementById('srcList');
+    var nodeBox = document.getElementById('nodeList');
+
+    if (!geoData.length) {
+      list.innerHTML = '<div class="cg-empty">等待攻击数据</div>';
+    } else {
+      var sorted = geoData.slice().sort(function (a, b) {
+        return (b.bandwidth || 0) - (a.bandwidth || 0);
+      }).slice(0, 20);
+      var mx = sorted[0] ? (sorted[0].bandwidth || 1) : 1;
+      list.innerHTML = sorted.map(function (d, i) {
+        return '<div class="src-row">' +
+          '<div class="top"><span class="nm">' + (d.city || '未知') + ' · ' +
+            ccName(d.country) + '</span>' +
+            '<span class="bw">' + (d.bandwidth || 0).toFixed(0) + ' Mbps</span></div>' +
+          '<div class="sub">攻击 ' + (d.count || 0) + ' 次 · ' +
+            ((d.types || []).join(', ') || '-') + '</div>' +
+          '<div class="bar" style="width:' + pct(d.bandwidth || 0, mx) + '%"></div>' +
+        '</div>';
+      }).join('');
+    }
+
+    if (!nodes.length) {
+      nodeBox.innerHTML = '<div class="text-muted">无节点数据</div>';
+    } else {
+      nodeBox.innerHTML = nodes.map(function (n) {
+        return '<div class="nd"><span>' + n.name + '</span>' +
+               '<span class="cap">' + (n.capacity || '--') + '</span></div>';
+      }).join('');
+    }
+  }
+
+  function updateStats() {
+    var countries = {};
+    geoData.forEach(function (d) { if (d.country) countries[d.country] = 1; });
+    document.getElementById('statCountries').textContent = Object.keys(countries).length;
+    document.getElementById('statSources').textContent = geoData.length;
+    var bw = geoData.reduce(function (s, d) { return s + (d.bandwidth || 0); }, 0);
+    document.getElementById('statBandwidth').textContent = Math.round(bw);
+    document.getElementById('statNodes').textContent = nodes.length;
+    document.getElementById('updateTime').textContent = new Date().toLocaleTimeString();
+  }
+
+  function applyData(d) {
+    if (!d) return;
+    geoData = d.geo_data || [];
+    nodes = d.mitigation_nodes || [];
+    MAP.setData(geoData, nodes);
+    updateStats();
+    renderLists();
+  }
+
+  window.refreshMap = function () {
+    if (window.__socket) window.__socket.emit('request_full_state');
+    fetch('/api/ddos/geo').then(function (r) { return r.json(); })
+      .then(applyData)
+      .catch(function (e) { console.warn('获取地理数据失败:', e); });
+  };
+
+  // ==========================================================================
+  //  WebSocket（保留原有事件契约）
+  // ==========================================================================
+  function initSocket() {
+    if (typeof io !== 'function') { setTimeout(window.refreshMap, 800); return; }
+    var socket = io();
+    window.__socket = socket;
+    socket.on('connect', function () {
+      if (typeof cgSetConnState === 'function') cgSetConnState(true);
+      socket.emit('request_full_state');
+      setTimeout(window.refreshMap, 600);
+    });
+    socket.on('disconnect', function (reason) {
+      if (typeof cgSetConnState === 'function') cgSetConnState(false, reason);
+    });
+    socket.on('connect_error', function (err) {
+      if (typeof cgSetConnState === 'function') cgSetConnState(false, err && err.message);
+    });
+    socket.on('full_state', function (state) { applyData(state); });
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    // 立刻拉一次数据，不等定时器。
+    // 原实现只有 setTimeout(1200) + setInterval(8000)，导致页面打开后
+    // 地图会空白最长 8 秒 —— 演示时"看不到东西"就发生在这里。
+    refreshMap();
+    initSocket();
+    setInterval(refreshMap, 8000);         // 定时刷新（与原实现一致）
+  });
+})();
+  </script>
+{% endblock %}

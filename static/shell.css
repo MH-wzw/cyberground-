@@ -1,0 +1,339 @@
+/* ==========================================================================
+   CyberGuard · Shell 层（v4006 · 左侧固定侧边栏）
+   ==========================================================================
+   负责「页面外壳」：左侧固定导航、内容容器、只读横幅、浪潮徽章、用户区。
+
+   为什么与 design-system.css 分开：
+     design-system.css 管"设计令牌与视觉基元"（颜色、字号、卡片）；
+     本文件管"页面骨架"（侧边栏多宽、内容怎么让位、留白多少）。
+     两者改动频率不同 —— 调色时不该动布局，改布局时不该碰调色。
+
+   v4005 变更：顶部横幅导航 → 左侧固定侧边栏（B 端 SOC 看板形态）。
+     · 导航项纵向排列，带图标；激活态 = 翡翠左指示条 + 半透明翡翠底
+     · 浪潮徽章 / 时钟 / 用户身份与退出入口 全部收进侧边栏底部
+     · 内容区整体右移 --side-w，顶部不再留导航空档
+
+   依赖：必须在 design-system.css 之后加载（用到其颜色、圆角、间距令牌）。
+     ⚠ 注释里绝不能写「星号+斜杠」相邻的令牌列举（如 --r-* 后跟 /），
+     那会提前终止注释块，把紧随其后的规则当成垃圾吞掉（已踩过：:root 变量块被吞）。
+   ========================================================================== */
+
+:root { --side-w: 232px; }
+
+/* ==========================================================================
+   一、左侧固定侧边栏
+   ========================================================================== */
+.cg-side {
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 1030;
+  width: var(--side-w);
+  display: flex; flex-direction: column;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-subtle);
+}
+
+/* ---- 品牌区 ---- */
+.cg-side__brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 18px 18px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  text-decoration: none;
+}
+.cg-mark {
+  width: 30px; height: 30px; border-radius: 9px;
+  background: var(--brand-grad);
+  box-shadow: 0 0 14px rgba(52, 211, 153, .35);
+  flex: none;
+  display: grid; place-items: center;
+  color: #052E22;
+}
+.cg-mark svg { width: 17px; height: 17px; }
+.cg-side__brand .b-meta { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.cg-side__brand .b-name {
+  font-size: 14.5px; font-weight: 700; letter-spacing: -.02em;
+  color: var(--text-primary); white-space: nowrap;
+}
+.cg-side__brand .b-sub {
+  font-size: 10.5px; color: var(--text-faint); white-space: nowrap;
+  letter-spacing: .04em;
+}
+
+/* ---- 导航项 ---- */
+.cg-side__nav {
+  flex: 1;
+  padding: 12px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+  overflow-y: auto;
+}
+.cg-side__nav .nav-cap {
+  font-size: 10px; letter-spacing: .14em; color: var(--text-faint);
+  padding: 8px 10px 4px; text-transform: uppercase;
+}
+.cg-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-1);
+  font-size: 12.5px; font-weight: 500;
+  color: var(--text-muted); text-decoration: none;
+  white-space: nowrap;
+  position: relative;
+  transition: color .18s, background .18s;
+}
+.cg-link svg { width: 16px; height: 16px; flex: none; opacity: .85; }
+.cg-link:hover { color: var(--text-primary); background: rgba(255, 255, 255, .04); }
+/* 激活态：翡翠左指示条 + 半透明翡翠底 + 翡翠文字 */
+.cg-link.on {
+  color: var(--accent-1); font-weight: 600;
+  background: var(--brand-dim);
+}
+.cg-link.on::before {
+  content: '';
+  position: absolute; left: -10px; top: 7px; bottom: 7px;
+  width: 3px; border-radius: 0 3px 3px 0;
+  background: var(--accent-1);
+  box-shadow: 0 0 8px rgba(52, 211, 153, .5);
+}
+.cg-link.on svg { opacity: 1; }
+/* 管理员专属项：普通用户隐藏（role-viewer 由 base.html 附加到 body） */
+body.role-viewer .needs-admin { display: none; }
+
+/* ---- 底部：状态 + 用户 ---- */
+.cg-side__foot {
+  border-top: 1px solid var(--line-soft);
+  padding: 12px 14px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+/* 浪潮徽章 —— 保留原有的 .wb-dot / .wb-text 子元素命名，
+   它们由 cyberguard.js 的 WebSocket 逻辑更新 */
+.cg-wave {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 11.5px; color: var(--text-muted);
+  white-space: nowrap;
+}
+.cg-wave .wb-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 10px var(--accent-green);
+  animation: cgPulse var(--pulse) ease-in-out infinite;
+}
+@keyframes cgPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .45; transform: scale(.82); }
+}
+
+.cg-clock {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px; color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* 用户块：整行即菜单按钮 —— Bootstrap 5 要求 toggle 是 .dropdown 的直接子元素，
+   因此这里用 <button class="cg-user-row"> 而不是内嵌小按钮（否则菜单点不开）。 */
+.cg-user-row {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%;
+  padding: 8px 8px;
+  margin: 0;
+  border: none; background: none; text-align: left;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  font: inherit;
+  transition: background .18s;
+}
+.cg-user-row:hover { background: rgba(255, 255, 255, .04); }
+.cg-user-row .user-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  /* 头像在翡翠渐变上，必须用深色字（亮底配白字只有 1.8:1） */
+  font-size: 12px; font-weight: 700; color: #052E22;
+  background: var(--brand-grad);
+  flex: none;
+}
+.cg-user-row .user-meta { display: flex; flex-direction: column; line-height: 1.15;
+                          align-items: flex-start; min-width: 0; }
+.cg-user-row .user-name { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.cg-user-row .user-role { font-size: 10px; color: var(--text-faint); }
+.cg-user-row .user-dots {
+  margin-left: auto;
+  width: 15px; height: 15px;
+  color: var(--text-faint); flex: none;
+}
+.cg-user-row:hover .user-dots { color: var(--text-primary); }
+/* 去掉 Bootstrap 给 dropdown-toggle 默认加的伪元素 caret（已有三点图标） */
+.cg-user-row.dropdown-toggle::after { content: none; }
+
+/* 下拉/上拉面板：深色抬升层 + 微亮描边 */
+.dropdown-dark {
+  background: var(--bg-dropdown);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-1);
+  box-shadow: var(--shadow-pop);
+  padding: 6px;
+  min-width: 190px;
+}
+.dropdown-dark .dropdown-item {
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  padding: 7px 11px;
+}
+.dropdown-dark .dropdown-item:hover {
+  background: rgba(255, 255, 255, .05);
+  color: var(--text-primary);
+}
+.dropdown-dark .dropdown-item-text {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 4px 11px;
+}
+.dropdown-dark .dropdown-divider {
+  border-color: var(--border-subtle);
+  margin: 5px 4px;
+}
+
+/* ==========================================================================
+   二、内容容器（为侧边栏让位）
+   ========================================================================== */
+.cg-wrap {
+  max-width: calc(var(--wrap, 1400px) + var(--side-w));
+  margin-left: var(--side-w);
+  /* 顶部不再有导航，空档只留呼吸感 */
+  padding: 26px 26px 92px;
+}
+
+.cg-page-hd { margin-bottom: 22px; }
+.cg-page-hd h1 {
+  font-size: clamp(24px, 2.6vw, 34px);
+  font-weight: 700;
+  letter-spacing: -.02em;
+  color: var(--text-primary);
+  line-height: 1.15;
+}
+.cg-page-hd p {
+  color: var(--text-faint);
+  font-size: 13px;
+  margin-top: 8px;
+  max-width: 700px;
+}
+
+/* 底部 ticker 为侧边栏让位（视觉样式仍在 design-system.css） */
+.cg-ticker { left: var(--side-w); }
+
+/* ==========================================================================
+   三、只读横幅（改为文档内静态条，不再悬浮）
+   ========================================================================== */
+.cg-readonly {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  border-radius: var(--r-1);
+  border: 1px solid rgba(251, 191, 36, .35);
+  background: var(--warn-dim);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.cg-readonly b { color: var(--accent-orange); }
+.cg-readonly .rb-ico { flex: none; }
+
+/* ==========================================================================
+   四、响应式：窄屏折叠为图标轨
+   ========================================================================== */
+@media (max-width: 1100px) {
+  :root { --side-w: 66px; }
+  .cg-side__brand { padding: 16px 0 14px; justify-content: center; }
+  .cg-side__brand .b-meta,
+  .cg-side__nav .nav-cap,
+  .cg-link span,
+  .cg-wave .wb-text,
+  .cg-clock,
+  .cg-user-row .user-meta,
+  .cg-user-row .user-dots { display: none; }
+  .cg-link { justify-content: center; padding: 9px 0; }
+  .cg-link.on::before { left: 0; }
+  .cg-side__foot { align-items: center; padding: 12px 6px 14px; }
+  .cg-user-row { justify-content: center; padding: 4px; width: auto; }
+}
+
+/* ==========================================================================
+   五、通用小组件
+   ========================================================================== */
+/* 区块标题：用在卡片内部或页面分区 */
+.cg-sec-hd {
+  display: flex; align-items: baseline; gap: 12px;
+  margin-bottom: 16px;
+}
+.cg-sec-hd .t {
+  font-size: 15px; font-weight: 600; letter-spacing: -.01em;
+  color: var(--text-primary);
+}
+.cg-sec-hd .s { font-size: 11.5px; color: var(--text-faint); }
+.cg-sec-hd .r { margin-left: auto; font-size: 11.5px; color: var(--text-faint); }
+
+/* 数据行：卡片内部的列表 */
+.cg-rows { display: flex; flex-direction: column; }
+.cg-row {
+  display: grid; align-items: center; gap: 12px;
+  padding: 9px 0;
+  font-size: 12.5px;
+  transition: background .18s;
+}
+.cg-row:hover { background: var(--surface-sunken); }
+.cg-row .k {
+  color: var(--text-secondary);
+  display: flex; align-items: center; gap: 9px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cg-row .v {
+  text-align: right; color: var(--text-primary); font-weight: 600;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.cg-row .v.d { color: var(--text-faint); font-weight: 400; }
+
+/* 状态点 */
+.cg-pip {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  display: inline-block;
+}
+.cg-pip.a { background: var(--c1); box-shadow: 0 0 9px var(--c1); }
+.cg-pip.b { background: var(--c2); box-shadow: 0 0 9px var(--c2); }
+.cg-pip.c { background: var(--accent-red); box-shadow: 0 0 9px var(--accent-red);
+            animation: cgPulse var(--pulse) ease-in-out infinite; }
+.cg-pip.d { background: var(--accent-orange); box-shadow: 0 0 9px var(--accent-orange); }
+
+/* 视觉容器（地图 / 粒子 的舞台） */
+.cg-stage {
+  position: relative; border-radius: 0; overflow: hidden;
+  border: none;
+  background: transparent;
+}
+.cg-stage canvas { display: block; width: 100%; height: 100%; }
+
+/* 舞台上的实时标签 */
+.cg-stage-tag {
+  position: absolute; left: 13px; top: 12px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 2px 0;
+  font-size: 11px; color: var(--text-secondary);
+  background: transparent;
+  border: none;
+}
+.cg-led {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--c1); box-shadow: 0 0 10px var(--c1);
+  animation: cgPulse var(--pulse) ease-in-out infinite;
+}
+
+/* 扫掠光带：唯一的"科技感"装饰，只放在视觉容器上 */
+.cg-sweep { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.cg-sweep::after {
+  content: ''; position: absolute; left: 0; right: 0; height: 110px;
+  background: linear-gradient(180deg, transparent,
+             rgba(52, 211, 153, .05), transparent);
+  animation: cgSweep 5.5s linear infinite;
+}
+@keyframes cgSweep { 0% { top: -110px; } 100% { top: 100%; } }

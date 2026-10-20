@@ -1,0 +1,27 @@
+# 统一换行符处理：仓库内统一存 LF，检出时按平台自动转换。
+# 这样 Windows 与 Linux/macOS 协作时不会出现整文件 diff。
+* text=auto eol=lf
+
+# 明确按文本处理
+*.py     text eol=lf
+*.html   text eol=lf
+*.css    text eol=lf
+*.js     text eol=lf
+*.md     text eol=lf
+*.txt    text eol=lf
+*.json   text eol=lf
+*.bat    text eol=crlf
+
+# 二进制文件：不做任何转换
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.svg    text eol=lf
+*.docx   binary
+*.sqlite3 binary
+*.zip    binary
+
+# 第三方库不参与 diff 统计，避免污染提交信息
+static/vendor/** linguist-vendored

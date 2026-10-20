@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册 | CyberGuard 安全运营平台</title>
+    <link href="/static/vendor/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/dark-theme.css">
+    <link rel="stylesheet" href="/static/design-system.css?v=41">
+    {# JS 侧统一色表：ECharts / Canvas 读不到 CSS 变量，必须由它供色 #}
+    <script src="/static/js/cg-theme.js?v=3"></script>
+    <style>
+    body { margin: 0; overflow-x: hidden; }
+    .auth-shell {
+      min-height: 100vh;
+      display: grid; grid-template-columns: 1.15fr 1fr;
+    }
+    .auth-brand {
+      position: relative; display: flex; flex-direction: column; justify-content: center;
+      padding: 56px 64px; overflow: hidden;
+      /* 浅色换肤：把深空紫黑底换成 Slate 20 起手的浅渐变，
+         两团光斑也由青/紫改为 Indigo/Violet，透明度下调以免白底显脏。 */
+      background:
+        radial-gradient(1000px 520px at 12% 18%, rgba(45,212,191,.12), transparent 62%),
+        radial-gradient(760px 460px at 88% 88%, rgba(52,211,153,.10), transparent 60%),
+        linear-gradient(150deg, #161A20 0%, #11151B 45%, #232B34 100%);
+      border-right: 1px solid var(--border-subtle);
+    }
+    .auth-brand::before {
+      content: ''; position: absolute; width: 880px; height: 880px;
+      top: 50%; left: 42%; transform: translate(-50%,-50%);
+      background: conic-gradient(from 0deg,
+        rgba(45,212,191,.14), transparent 30%,
+        rgba(52,211,153,.12), transparent 64%,
+        rgba(52,211,153,.12), transparent 100%);
+      animation: authSpin 34s linear infinite; pointer-events: none;
+    }
+    @keyframes authSpin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+    .brand-inner { position: relative; z-index: 2; max-width: 560px; }
+    .auth-logo { display: flex; align-items: center; gap: 14px; margin-bottom: 30px; }
+    .auth-logo .mark {
+      width: 56px; height: 56px; display: grid; place-items: center;
+      border-radius: 16px; border: 1px solid var(--border-glow);
+      background: linear-gradient(140deg, rgba(45,212,191,.20), rgba(52,211,153,.14));
+      box-shadow: 0 0 30px rgba(45,212,191,.26);
+    }
+    /* 品牌盾牌 —— clip-path 绘制，替代原先的 emoji（跨平台字形不一致） */
+    .auth-logo .mark::after {
+      content: '';
+      width: 20px; height: 24px;
+      background: linear-gradient(160deg, var(--c2), var(--c1));
+      clip-path: polygon(50% 0, 100% 17%, 100% 60%, 50% 100%, 0 60%, 0 17%);
+    }
+    .auth-logo .name {
+      font-size: 1.5rem; font-weight: 700;
+      background: linear-gradient(92deg, #6EE7B7, #34D399 55%, #34D399);
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .auth-logo .sub { font-size: .76rem; color: var(--text-muted); letter-spacing: 2px; }
+    .auth-headline { font-size: 1.9rem; font-weight: 700; line-height: 1.34; margin-bottom: 14px; }
+    .auth-headline em {
+      font-style: normal;
+      background: linear-gradient(92deg, #6EE7B7, #34D399);
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .auth-desc { color: var(--text-secondary); font-size: .92rem; line-height: 1.85; }
+
+    /* 角色说明卡片 */
+    .role-note {
+      margin-top: 28px; padding: 18px 20px; border-radius: 14px;
+      background: rgba(22, 26, 32, .78); border: 1px solid #232B34;
+      backdrop-filter: blur(6px);
+    }
+    .role-note h4 { font-size: .86rem; margin: 0 0 12px; color: var(--text-primary); }
+    .role-line {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 9px 0; font-size: .8rem; color: var(--text-secondary);
+      border-bottom: 1px dashed var(--border-subtle);
+    }
+    .role-line:last-child { border-bottom: none; }
+    .role-badge {
+      flex: 0 0 auto; padding: 2px 9px; border-radius: 20px;
+      font-size: .68rem; font-weight: 600; letter-spacing: .4px;
+    }
+    .role-badge.admin  { background: rgba(248,113,113,.14);  color: var(--danger-text); border: 1px solid rgba(248,113,113,.34); }
+    .role-badge.viewer { background: var(--brand-dim); color: var(--accent-1-dim); border: 1px solid rgba(52,211,153,.45); }
+
+    .auth-form-side {
+      display: flex; align-items: center; justify-content: center;
+      padding: 40px 28px; background: #161A20;
+    }
+    .auth-card {
+      width: 100%; max-width: 400px; padding: 34px 32px 30px; border-radius: 18px;
+      background: #161A20; border: 1px solid #232B34;
+      box-shadow: 0 24px 70px rgba(0,0,0,.62), inset 0 1px 0 rgba(255,255,255,.04);
+      backdrop-filter: blur(14px);
+      animation: cardIn .55s cubic-bezier(.4,0,.2,1) forwards;
+    }
+    @keyframes cardIn { from { opacity: 0; transform: translateY(20px) scale(.985); } to { opacity: 1; transform: none; } }
+    .auth-card h2 { font-size: 1.28rem; font-weight: 700; margin: 0 0 4px; }
+    .auth-card .hint { font-size: .78rem; color: var(--text-muted); margin-bottom: 22px; }
+
+    .field { margin-bottom: 15px; position: relative; }
+    .field label { display: block; font-size: .74rem; color: var(--text-secondary); letter-spacing: .6px; margin-bottom: 6px; }
+    .field .form-control-dark {
+      width: 100%; padding: 11px 13px; background: #161A20;
+      border: 1px solid var(--border-subtle); border-radius: 9px;
+      color: var(--text-primary); font-size: .9rem;
+      transition: border-color .22s, box-shadow .22s, background .22s;
+    }
+    .field .form-control-dark:focus {
+      outline: none; background: #161A20;
+      border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(52,211,153,.20);
+    }
+
+    .btn-auth {
+      width: 100%; padding: 11px 16px; margin-top: 6px; border: none; border-radius: 9px;
+      font-size: .92rem; font-weight: 600; color: #052E22; cursor: pointer;
+      background: linear-gradient(96deg, #34D399, #2DD4BF);
+      box-shadow: 0 8px 24px rgba(110,231,183,.32);
+      position: relative; overflow: hidden;
+      transition: transform .2s, box-shadow .24s, filter .24s;
+    }
+    .btn-auth:hover { transform: translateY(-1px); filter: brightness(1.07); box-shadow: 0 12px 30px rgba(110,231,183,.42); }
+    .btn-auth::after {
+      content: ''; position: absolute; top: 0; left: -60%; width: 40%; height: 100%;
+      background: linear-gradient(100deg, transparent, rgba(255,255,255,.10), transparent);
+      transition: left .55s ease;
+    }
+    .btn-auth:hover::after { left: 120%; }
+
+    .flash {
+      padding: 10px 13px; border-radius: 9px; font-size: .82rem;
+      margin-bottom: 15px; border-left: 3px solid; animation: flashIn .35s ease;
+    }
+    @keyframes flashIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+    .flash.error   { background: rgba(248,113,113,.10);  border-color: var(--accent-red);   color: var(--danger-text); }
+    .flash.success { background: rgba(52,211,153,.12); border-color: var(--accent-green); color: var(--accent-green); }
+
+    .auth-foot { margin-top: 20px; text-align: center; font-size: .8rem; color: var(--text-muted); }
+    .auth-foot a { color: var(--accent-blue); text-decoration: none; }
+    .auth-foot a:hover { color: var(--accent-1-hi); }
+
+    /* 密码强度条 */
+    .pw-meter { height: 4px; border-radius: 2px; background: var(--bg-input); margin-top: 7px; overflow: hidden; }
+    .pw-meter span { display: block; height: 100%; width: 0; border-radius: 2px; transition: width .3s, background .3s; }
+    .pw-tip { font-size: .7rem; color: var(--text-muted); margin-top: 5px; }
+
+    @media (max-width: 992px) {
+      .auth-shell { grid-template-columns: 1fr; }
+      .auth-brand { padding: 40px 28px 32px; border-right: none; border-bottom: 1px solid var(--border-subtle); }
+      .auth-headline { font-size: 1.5rem; }
+      .auth-form-side { padding: 30px 20px 46px; }
+    }
+    </style>
+  </head>
+  <body class="theme-dash">
+
+    <div class="auth-shell">
+
+      <section class="auth-brand">
+        <div class="brand-inner">
+          <div class="auth-logo">
+            <div class="mark"></div>
+            <div>
+              <div class="name">加入 CyberGuard</div>
+              <div class="sub">CREATE READ-ONLY ACCOUNT</div>
+            </div>
+          </div>
+
+          <h1 class="auth-headline">注册一个 <em>只读账户</em><br>查看安全态势</h1>
+          <p class="auth-desc">
+            为保障处置操作的可追溯性，自助注册的账户一律为<strong>普通用户（只读）</strong>角色：
+            可以浏览全部页面、查询日志与告警、导出报表，
+            但无法修改告警状态、增删黑名单、触发检测或执行用户管理。
+          </p>
+
+          <div class="role-note">
+            <h4>角色权限对照</h4>
+            <div class="role-line">
+              <span class="role-badge admin">管理员</span>
+              <span>全部页面 + 告警处置、黑名单增删、触发检测、用户管理</span>
+            </div>
+            <div class="role-line">
+              <span class="role-badge viewer">普通用户</span>
+              <span>全部页面查看 + 数据查询 + 报表导出（所有写操作被服务端拒绝）</span>
+            </div>
+            <div class="role-line">
+              <span class="role-badge viewer">说明</span>
+              <span>管理员角色无法自助注册，需由既有管理员在「用户管理」页授予</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="auth-form-side">
+        <div class="auth-card">
+          <h2>创建只读账户</h2>
+          <div class="hint">注册后即可登录查看态势，写操作需要管理员权限</div>
+
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+              {% for category, message in messages %}
+                <div class="flash {{ 'error' if category == 'error' else 'success' }}">{{ message }}</div>
+              {% endfor %}
+            {% endif %}
+          {% endwith %}
+
+          <form method="post" action="/register" autocomplete="off">
+            <div class="field">
+              <label for="username">用户名</label>
+<input class="form-control-dark" id="username" name="username"
+              placeholder="字母、数字、下划线，最多 32 位" required autofocus>
+            </div>
+
+            <div class="field">
+              <label for="password">密码</label>
+<input class="form-control-dark" id="password" name="password" type="password"
+              placeholder="至少 6 位" required>
+              <div class="pw-meter"><span id="pwBar"></span></div>
+              <div class="pw-tip" id="pwTip">建议混合大小写字母、数字与符号</div>
+            </div>
+
+            <div class="field">
+              <label for="confirm">确认密码</label>
+<input class="form-control-dark" id="confirm" name="confirm" type="password"
+              placeholder="请再次输入密码" required>
+            </div>
+
+            <button class="btn-auth" type="submit" id="regBtn">注册并返回登录</button>
+          </form>
+
+          <div class="auth-foot">
+            已有账户？<a href="/login">返回登录</a>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <script src="/static/vendor/bootstrap.bundle.min.js"></script>
+    <script>
+  // 密码强度提示（纯前端体验，实际强度校验以服务端为准）
+  var pw = document.getElementById('password');
+  var bar = document.getElementById('pwBar');
+  var tip = document.getElementById('pwTip');
+  pw.addEventListener('input', function () {
+    var v = pw.value, score = 0;
+    if (v.length >= 6) score++;
+    if (v.length >= 10) score++;
+    if (/[a-z]/.test(v) && /[A-Z]/.test(v)) score++;
+    if (/\d/.test(v)) score++;
+    if (/[^A-Za-z0-9]/.test(v)) score++;
+    var map = [
+      { w: '0%',   c: 'transparent',        t: '建议混合大小写字母、数字与符号' },
+      { w: '25%',  c: CG.red,            t: '强度：弱' },
+      { w: '45%',  c: CG.orange,            t: '强度：一般' },
+      { w: '65%',  c: CG.orange,            t: '强度：中等' },
+      { w: '85%',  c: CG.green,            t: '强度：较强' },
+      { w: '100%', c: CG.green,            t: '强度：很强' }
+    ][Math.min(score, 5)];
+    bar.style.width = map.w;
+    bar.style.background = map.c;
+    tip.textContent = map.t;
+    tip.style.color = score >= 4 ? CG.green : '';
+  });
+
+  document.querySelector('form').addEventListener('submit', function () {
+    var b = document.getElementById('regBtn');
+    b.disabled = true;
+    b.textContent = '正在创建账户...';
+  });
+    </script>
+  </body>
+</html>
